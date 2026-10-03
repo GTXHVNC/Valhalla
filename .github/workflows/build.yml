@@ -267,7 +267,7 @@ jobs:
           mkdir -p release/agent release/server release/panel
           cp artifacts/valhalla-agent-windows-x64/valhalla_agent.exe release/agent/valhalla_agent.exe
           cp artifacts/valhalla-relay-linux-x64/valhalla-relay release/server/valhalla-relay
-          cp artifacts/valhalla-panel-windows-x64/* release/panel/
+          cp -a artifacts/valhalla-panel-windows-x64/. release/panel/
           tar -C release -czf valhalla-build-${GITHUB_SHA}.tgz agent server panel
 
       - name: Upload release bundle

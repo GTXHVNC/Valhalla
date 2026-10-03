@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 18 18" fill="none">
+  <!-- Two nodes connected through a switch -->
+  <circle cx="3" cy="9" r="2" stroke="#7BAEC8" stroke-width="1.4"/>
+  <circle cx="15" cy="9" r="2" stroke="#7BAEC8" stroke-width="1.4"/>
+  <!-- Wire left -->
+  <line x1="5" y1="9" x2="7.5" y2="9" stroke="#7BAEC8" stroke-width="1.4" stroke-linecap="round"/>
+  <!-- Break/switch in the middle -->
+  <line x1="7.5" y1="9" x2="9.5" y2="6.5" stroke="#7BAEC8" stroke-width="1.4" stroke-linecap="round"/>
+  <!-- Wire right -->
+  <line x1="10.5" y1="9" x2="13" y2="9" stroke="#7BAEC8" stroke-width="1.4" stroke-linecap="round"/>
+  <!-- Switch pivot dot -->
+  <circle cx="7.5" cy="9" r="0.9" fill="#7BAEC8"/>
+</svg>

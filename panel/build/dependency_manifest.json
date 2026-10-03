@@ -1,0 +1,467 @@
+{
+  "schema_version": 1,
+  "canonical_dependency_directory": "dependencies",
+  "required_files": [
+    {
+      "filename": "DevExpress.BonusSkins.v24.2.dll",
+      "input_costura": "costura.devexpress.bonusskins.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.BonusSkins.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "ab61d5c0c61ba04b1c32fc670c6048d6007901d2",
+      "size": 22622824,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Charts.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.charts.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Charts.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "acf467f025ef1bd4504bbfcb4508266b7db68a7e",
+      "size": 1054824,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Data.Desktop.v24.2.dll",
+      "input_costura": "costura.devexpress.data.desktop.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Data.Desktop.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "7132f60e6c108e3e7877ccadbffaf0480a63a437",
+      "size": 1135720,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Data.v24.2.dll",
+      "input_costura": "costura.devexpress.data.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Data.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "873f3eb5aeae29b4bd07b0175b46a15bc8840a06",
+      "size": 5706856,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Drawing.v24.2.dll",
+      "input_costura": "costura.devexpress.drawing.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Drawing.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "f735306b481328b51185815b08d7d6c94ac94f3e",
+      "size": 1036904,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Map.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.map.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Map.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "ff7cc4e61e67843fe65ef56632172a94e5c5dee4",
+      "size": 2180200,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Printing.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.printing.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Printing.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "1e1960b1e50881368c23ddb1c5dee6556e243c06",
+      "size": 4617320,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Sparkline.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.sparkline.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Sparkline.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "ddcc164b2dc5a7e5165ec2bc5be4d4341faf1271",
+      "size": 96360,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.TreeMap.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.treemap.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.TreeMap.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "ad4d6e5730af2a10d4c47080709107ccb6724840",
+      "size": 41576,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Utils.v24.2.dll",
+      "input_costura": "costura.devexpress.utils.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Utils.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "c2c29e87b96f26f34266dbc9936429fc97817e58",
+      "size": 20510824,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraBars.v24.2.dll",
+      "input_costura": "costura.devexpress.xtrabars.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraBars.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "e8931ffa97676812be46e3797bfbae38a050e3c2",
+      "size": 7042664,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraCharts.v24.2.dll",
+      "input_costura": "costura.devexpress.xtracharts.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraCharts.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "dccb1dfe3800ce99a0fafba0fbbc87ca7073e7a3",
+      "size": 5416040,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraCharts.v24.2.UI.dll",
+      "input_costura": "costura.devexpress.xtracharts.v24.2.ui.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraCharts.v24.2.UI, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "81aa7c4e6f6e304043b7f06a7de572adb39f934f",
+      "size": 395880,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraCharts.v24.2.Wizard.dll",
+      "input_costura": "costura.devexpress.xtracharts.v24.2.wizard.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraCharts.v24.2.Wizard, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "3b4b588ac0267b7eb0481d6f730bdc1d4e02306b",
+      "size": 8673384,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraEditors.v24.2.dll",
+      "input_costura": "costura.devexpress.xtraeditors.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraEditors.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "8523afd992323d85a391db524c7b352371f7d5db",
+      "size": 8346728,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraGrid.v24.2.dll",
+      "input_costura": "costura.devexpress.xtragrid.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraGrid.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "a5f79de0378b01b13af332c9ee4be56b14c4d928",
+      "size": 3859560,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraLayout.v24.2.dll",
+      "input_costura": "costura.devexpress.xtralayout.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraLayout.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "9a4c37a18148f493742631e600d9fd71d691749c",
+      "size": 2185832,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraMap.v24.2.dll",
+      "input_costura": "costura.devexpress.xtramap.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraMap.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "cd1e72b36d50ddf291879f8f18a49667059c3f6c",
+      "size": 1760872,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraPrinting.v24.2.dll",
+      "input_costura": "costura.devexpress.xtraprinting.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraPrinting.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "1d9ef1db581c209bc8385c0976e9d573f327f1bc",
+      "size": 1151592,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraTreeList.v24.2.dll",
+      "input_costura": "costura.devexpress.xtratreelist.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraTreeList.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "f5bccb06d68121a67576b6544a4720dc3805998a",
+      "size": 1711208,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraTreeMap.v24.2.dll",
+      "input_costura": "costura.devexpress.xtratreemap.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraTreeMap.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "5bfcc7c534ee31e4e0836463fe27710d3d4144fc",
+      "size": 283240,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraTreeMap.v24.2.UI.dll",
+      "input_costura": "costura.devexpress.xtratreemap.v24.2.ui.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraTreeMap.v24.2.UI, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "9e569df0b34da3f1c4969fa41f0bcc4a5d06867b",
+      "size": 60008,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "Mono.Cecil.dll",
+      "input_costura": "costura.mono.cecil.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "0.11.6.0",
+      "assembly_identity": "Mono.Cecil, Version=0.11.6.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e",
+      "sha1": "0e0dcb36aa56e7f99aa524cfb3c72e4918cc5b32",
+      "size": 363008,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "System.Text.Json.dll",
+      "input_costura": "costura.system.text.json.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "8.0.0.5",
+      "assembly_identity": "System.Text.Json, Version=8.0.0.5, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "501c1eba257ed631b271049bba0dc148e1953c3c",
+      "size": 887368,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "DevExpress.Pdf.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.pdf.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Pdf.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "3023051c46cd47c1a8b3a93ff05381a8fd9a9be3",
+      "size": 5229672,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Pdf.v24.2.Drawing.dll",
+      "input_costura": "costura.devexpress.pdf.v24.2.drawing.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Pdf.v24.2.Drawing, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "cb8a0d8f7f0a5258bad50983a64aa2f5f5b1e3a7",
+      "size": 567912,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.DataVisualization.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.datavisualization.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.DataVisualization.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "8c29dfa8b6b3476e034c569d92d73a78334c42e2",
+      "size": 81512,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraVerticalGrid.v24.2.dll",
+      "input_costura": "costura.devexpress.xtraverticalgrid.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraVerticalGrid.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "044200e5281da0747ef0758d16c51f9f5cd79904",
+      "size": 1308264,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Utils.v24.2.UI.dll",
+      "input_costura": "costura.devexpress.utils.v24.2.ui.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Utils.v24.2.UI, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "908368f85852c78e55df068535405d84583247e1",
+      "size": 433768,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.XtraNavBar.v24.2.dll",
+      "input_costura": "costura.devexpress.xtranavbar.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraNavBar.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "e2f92e3fe308dab58a0b9f54675fd1923e632789",
+      "size": 451176,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.RichEdit.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.richedit.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.RichEdit.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "29357406a2039e196152809d9ea52b192110cf4c",
+      "size": 9336424,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "System.Memory.dll",
+      "input_costura": "costura.system.memory.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "4.0.1.2",
+      "assembly_identity": "System.Memory, Version=4.0.1.2, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "3c5c5df5f8f8db3f0a35c5ed8d357313a54e3cde",
+      "size": 142240,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "System.ValueTuple.dll",
+      "input_costura": "costura.system.valuetuple.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "4.0.3.0",
+      "assembly_identity": "System.ValueTuple, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "d1664731719e85aad7a2273685d77feb0204ec98",
+      "size": 25232,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "System.Text.Encodings.Web.dll",
+      "input_costura": "costura.system.text.encodings.web.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "8.0.0.0",
+      "assembly_identity": "System.Text.Encodings.Web, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "55ddfbe80762c02f9a9c65809f9ec3ef8f7f2ccc",
+      "size": 79024,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "System.Numerics.Vectors.dll",
+      "input_costura": "costura.system.numerics.vectors.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "4.1.4.0",
+      "assembly_identity": "System.Numerics.Vectors, Version=4.1.4.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+      "sha1": "3d216458740ad5cb05bc5f7c3491cde44a1e5df0",
+      "size": 115856,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "System.Threading.Tasks.Extensions.dll",
+      "input_costura": "costura.system.threading.tasks.extensions.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "4.2.0.1",
+      "assembly_identity": "System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "2242627282f9e07e37b274ea36fac2d3cd9c9110",
+      "size": 25984,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "Microsoft.Bcl.AsyncInterfaces.dll",
+      "input_costura": "costura.microsoft.bcl.asyncinterfaces.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "8.0.0.0",
+      "assembly_identity": "Microsoft.Bcl.AsyncInterfaces, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "74dc07a8cccee0ca3bf5cf64320230ca1a37ad85",
+      "size": 26904,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "System.Buffers.dll",
+      "input_costura": "costura.system.buffers.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "4.0.3.0",
+      "assembly_identity": "System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+      "sha1": "2f410a0396bc148ed533ad49b6415fb58dd4d641",
+      "size": 20856,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "System.Runtime.CompilerServices.Unsafe.dll",
+      "input_costura": "costura.system.runtime.compilerservices.unsafe.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "6.0.0.0",
+      "assembly_identity": "System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+      "sha1": "180a7baafbc820a838bbaca434032d9d33cceebe",
+      "size": 18024,
+      "direct_compile_reference": false
+    },
+    {
+      "filename": "DevExpress.XtraRichEdit.v24.2.dll",
+      "input_costura": "costura.devexpress.xtrarichedit.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.XtraRichEdit.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "9fb48dfd663d4743f235b100ec3a96fee54626ce",
+      "size": 3159656,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.DataAccess.v24.2.dll",
+      "input_costura": "costura.devexpress.dataaccess.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.DataAccess.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "8a56ff1023b719dc34478005e0d1d3067e7459cf",
+      "size": 2754152,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Office.v24.2.Core.dll",
+      "input_costura": "costura.devexpress.office.v24.2.core.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Office.v24.2.Core, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "dfba8f20842f096685a726ce9cf84a8a10b05947",
+      "size": 3708520,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Images.v24.2.dll",
+      "input_costura": "costura.devexpress.images.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Images.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "e6497ce821a152d1feb894e317451ebd82d34182",
+      "size": 8832104,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.Xpo.v24.2.dll",
+      "input_costura": "costura.devexpress.xpo.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.Xpo.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "2bf76ad0930109278f0931d4c563736c6f51dd52",
+      "size": 2327144,
+      "direct_compile_reference": true
+    },
+    {
+      "filename": "DevExpress.CodeParser.v24.2.dll",
+      "input_costura": "costura.devexpress.codeparser.v24.2.dll.compressed",
+      "kind": "managed_runtime_assembly",
+      "version": "24.2.3.0",
+      "assembly_identity": "DevExpress.CodeParser.v24.2, Version=24.2.3.0, Culture=neutral, PublicKeyToken=b88d1754d700e49a",
+      "sha1": "08f752e362c351bb8aed7a31885abce4f80a5d56",
+      "size": 1737320,
+      "direct_compile_reference": true
+    }
+  ],
+  "ignored_build_artifacts": [
+    "Costura.dll",
+    "Costura.pdb",
+    "Mono.Cecil.Mdb.dll",
+    "Mono.Cecil.Pdb.dll",
+    "Mono.Cecil.Rocks.dll",
+    "Mono.Cecil.pdb",
+    "Mono.Cecil.Mdb.pdb",
+    "Mono.Cecil.Pdb.pdb",
+    "Mono.Cecil.Rocks.pdb"
+  ]
+}

@@ -1,0 +1,283 @@
+name: Valhalla Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: valhalla-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    name: Build and test Valhalla Agent
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Rust 1.92.0
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.92.0-x86_64-pc-windows-msvc --profile minimal
+          rustup default 1.92.0-x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            agent\target
+          key: ${{ runner.os }}-agent-cargo-${{ hashFiles('rust-toolchain.toml', 'agent/Cargo.toml', 'server/protocol/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-agent-cargo-
+
+      - name: Test agent
+        shell: pwsh
+        run: cargo test --manifest-path Cargo.toml
+
+      - name: Build agent
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path Cargo.toml --bin valhalla_agent
+          $path = 'target\release\valhalla_agent.exe'
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Agent executable was not produced: $path" }
+          if ((Get-Item -LiteralPath $path).Length -le 0) { throw 'Agent executable is empty.' }
+
+      - name: Upload agent
+        uses: actions/upload-artifact@v4
+        with:
+          name: valhalla-agent-windows-x64
+          path: agent/target/release/valhalla_agent.exe
+          if-no-files-found: error
+
+  server:
+    name: Build and test Valhalla Server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Rust 1.92.0
+        shell: bash
+        run: rustup toolchain install 1.92.0-x86_64-unknown-linux-gnu --profile minimal && rustup default 1.92.0-x86_64-unknown-linux-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            server/target
+          key: ${{ runner.os }}-server-cargo-${{ hashFiles('rust-toolchain.toml', 'server/Cargo.toml', 'server/protocol/Cargo.toml', 'server/tools/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-server-cargo-
+
+      - name: Test server workspace
+        shell: bash
+        run: cargo test --manifest-path Cargo.toml --workspace
+
+      - name: Check Python runtime services
+        shell: bash
+        run: python3 -m py_compile telemetry_service.py tools/command_client.py
+
+      - name: Build server workspace
+        shell: bash
+        run: |
+          cargo build --release --manifest-path Cargo.toml --workspace
+          test -s target/release/valhalla-relay
+
+      - name: Upload relay
+        uses: actions/upload-artifact@v4
+        with:
+          name: valhalla-relay-linux-x64
+          path: server/target/release/valhalla-relay
+          if-no-files-found: error
+
+  panel:
+    name: Build Valhalla Panel
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x86
+          vs-version: '[17.0,18.0)'
+
+      - name: Validate panel build inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Join-Path $PWD 'panel\Valhalla.csproj'
+          $manifest = Join-Path $PWD 'panel\build\dependency_manifest.json'
+          $deps = Join-Path $PWD 'panel\build\dependencies'
+          foreach ($path in @($project, $manifest, $deps)) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "Required panel build input is missing: $path" }
+          }
+          $required = @(Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).required_files
+          foreach ($entry in $required) {
+            $path = Join-Path $deps $entry.filename
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing prepared DevExpress/runtime dependency: $($entry.filename)" }
+          }
+          Write-Host "Panel inputs validated: $($required.Count) runtime dependencies + map data."
+
+      - name: Restore panel packages
+        shell: pwsh
+        run: msbuild panel\Valhalla.csproj /t:Restore /p:Configuration=Release /p:Platform=AnyCPU /m
+
+      - name: Build panel
+        shell: pwsh
+        run: msbuild panel\Valhalla.csproj /t:Build /p:Configuration=Release /p:Platform=AnyCPU /m /v:minimal
+
+      - name: Verify panel output
+        shell: pwsh
+        run: |
+          $output = Join-Path $PWD 'panel\bin\Release\Valhalla.exe'
+          if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw "Panel executable was not produced: $output" }
+          if ((Get-Item -LiteralPath $output).Length -le 0) { throw 'Panel executable is empty.' }
+
+      - name: Upload panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: valhalla-panel-windows-x64
+          path: panel/bin/Release/*
+          if-no-files-found: error
+
+  quality:
+    name: Validate repository layout and branding
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Validate clean repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d agent
+          test -d server
+          test -d panel
+          test -f README.md
+          test ! -s README.md
+
+          md_count=$(find . -type f -iname '*.md' | wc -l)
+          test "$md_count" -eq 1
+          test -z "$(find . -type f \( -iname '*.markdown' -o -iname '*.rst' -o -iname '*.adoc' -o -iname '*.txt' \) -print -quit)"
+
+          python3 - <<'PY2'
+          from pathlib import Path
+          tokens = [
+              bytes.fromhex(value).decode()
+              for value in (
+                  '7a65726f7472616365',
+                  '7a747365637572697479',
+                  '7a74736563',
+                  '7a65726f207472616365',
+                  '6f6666696369616c',
+                  '737465616c6572',
+                  '7a7472616365',
+                  '56414c48414c4c415f43495f534d4f4b45',
+                  '56414c48414c4c415f544553545f5055424c49435f4950',
+                  '73637265656e73686f74',
+              )
+          ]
+          binary_suffixes = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.dll', '.exe', '.pdb'}
+          for path in Path('.').rglob('*'):
+              if not path.is_file() or '.git' in path.parts:
+                  continue
+              if any(token.casefold() in path.name.casefold() for token in tokens):
+                  raise SystemExit(f'legacy or removed artifact naming remains: {path}')
+              if path.suffix.lower() in binary_suffixes:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              lowered = text.casefold()
+              for token in tokens:
+                  if token.casefold() in lowered:
+                      raise SystemExit(f'legacy branding or removed CI instrumentation remains: {path}')
+          PY2
+
+          test ! -d panel/scripts
+          test ! -d panel/tests
+          test ! -d panel/plugin-sdk
+          test ! -f agent/src/legacy_net.rs
+          test ! -f agent/plugin/hello.cpp
+          test ! -f panel/valhalla_agent.py
+          test ! -f panel/resources/cookies_60px.svg
+
+          python3 - <<'PY2'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = Path('.')
+          ET.parse(root / 'panel/Valhalla.csproj')
+          resx = root / 'panel/src/Properties/Resources.resx'
+          tree = ET.parse(resx)
+          for data in tree.getroot().findall('data'):
+              value = data.findtext('value', '')
+              if ';' not in value or not value.startswith('..\\'): continue
+              rel = value.split(';', 1)[0].replace('\\', '/')
+              target = (resx.parent / rel).resolve()
+              assert target.is_file(), f'missing resource file: {target}'
+          print('Repository layout and resource references validated.')
+          PY2
+
+  package:
+    name: Package build artifacts
+    needs: [agent, server, panel, quality]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/agent release/server release/panel
+          cp artifacts/valhalla-agent-windows-x64/valhalla_agent.exe release/agent/valhalla_agent.exe
+          cp artifacts/valhalla-relay-linux-x64/valhalla-relay release/server/valhalla-relay
+          cp artifacts/valhalla-panel-windows-x64/* release/panel/
+          tar -C release -czf valhalla-build-${GITHUB_SHA}.tgz agent server panel
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: valhalla-build-${{ github.sha }}
+          path: valhalla-build-${{ github.sha }}.tgz
+          if-no-files-found: error

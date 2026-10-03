@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" fill="none">
+  <!-- Dashboard: speedometer / gauge arc -->
+  <!-- Outer arc: left half to right half, like a gauge face (open at bottom) -->
+  <path d="M2.5 13 A7 7 0 1 1 15.5 13" stroke="#6F93B7" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <!-- Tick marks on the arc (3 ticks: left, top, right) -->
+  <line x1="3.2" y1="10.5" x2="4.4" y2="9.5" stroke="#6F93B7" stroke-width="1.1" stroke-linecap="round"/>
+  <line x1="9" y1="2.8" x2="9" y2="4.3" stroke="#6F93B7" stroke-width="1.1" stroke-linecap="round"/>
+  <line x1="14.8" y1="10.5" x2="13.6" y2="9.5" stroke="#6F93B7" stroke-width="1.1" stroke-linecap="round"/>
+  <!-- Needle pointing to upper-right (~70% zone) -->
+  <line x1="9" y1="9" x2="12.8" y2="5.2" stroke="#6F93B7" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Center pivot dot -->
+  <circle cx="9" cy="9" r="1.5" fill="#6F93B7"/>
+  <!-- Base flat line at gauge bottom -->
+  <line x1="5" y1="14.5" x2="13" y2="14.5" stroke="#6F93B7" stroke-width="1.1" stroke-linecap="round"/>
+</svg>

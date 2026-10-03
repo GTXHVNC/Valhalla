@@ -1,0 +1,26 @@
+[Unit]
+Description=Valhalla Relay onion/WebSocket connection server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=valhalla
+Group=valhalla
+ExecStart=/opt/valhalla/bin/valhalla-relay --authorized-keys /etc/valhalla/authorized_keys --state-dir /var/lib/valhalla/arti-state --cache-dir /var/lib/valhalla/arti-cache --local-socket /run/valhalla/telemetry.sock --path /valhalla --onion-port 443 --max-connections 4096 --max-auth-inflight 64 --ipc-queue 256 --message-rate 10 --handshake-timeout 8 --auth-timeout 8 --idle-timeout 90 --ping-interval 30
+Restart=on-failure
+RestartSec=5s
+RuntimeDirectory=valhalla
+RuntimeDirectoryMode=0750
+StateDirectory=valhalla
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/valhalla /run/valhalla
+LimitNOFILE=20000
+TasksMax=8192
+
+[Install]
+WantedBy=multi-user.target

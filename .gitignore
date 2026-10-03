@@ -1,0 +1,35 @@
+# .NET / Visual Studio
+**/bin/
+**/obj/
+**/.vs/
+*.user
+*.suo
+*.pdb
+
+# Rust
+**/target/
+Cargo.lock
+
+# Python
+**/__pycache__/
+*.py[cod]
+
+# Runtime credentials and state
+*.crt
+*.key
+*.pem
+*.secret
+*.env
+**/auth/
+**/state/
+**/cache/
+
+# Build/release output
+**/dist/
+**/release/
+*.zip
+*.tgz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

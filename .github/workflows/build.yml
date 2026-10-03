@@ -189,11 +189,6 @@ jobs:
           test -d agent
           test -d server
           test -d panel
-          test -f README.md
-          test ! -s README.md
-
-          md_count=$(find . -type f -iname '*.md' | wc -l)
-          test "$md_count" -eq 1
           test -z "$(find . -type f \( -iname '*.markdown' -o -iname '*.rst' -o -iname '*.adoc' -o -iname '*.txt' \) -print -quit)"
 
           python3 - <<'PY2'

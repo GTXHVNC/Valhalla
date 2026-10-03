@@ -35,5 +35,5 @@ tor-hsservice = { version = "0.46.0", default-features = false }
 tor-proto = { version = "0.46.0", default-features = false, features = ["hs-service", "tokio"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
-valhalla_protocol = { path = "../protocol" }
+valhalla_protocol = { path = "protocol" }
 

@@ -354,7 +354,7 @@ namespace Valhalla
             // Re-layout the pre-existing local listener controls at the bottom of the same panel.
             label47.Text = "Local Listener Port";
             label47.Location = new Point(left, 153);
-            textEdit1.AllowFocused = true;
+            textEdit1.Properties.AllowFocused = true;
             textEdit1.Location = new Point(left, 172);
             textEdit1.Size = new Size(300, 20);
             simpleButton1.Location = new Point(316, 160);
@@ -710,10 +710,8 @@ namespace Valhalla
                         {
                             try { await relayGatewayClient.SendCommandAsync(target, "REQ:DATA", CancellationToken.None).ConfigureAwait(false); } catch { }
                         }
-                        Task.Delay(15000).ContinueWith(delegate
-                        {
-                            lock (connectionStateLock) pendingRelayTransitions.Remove(connectionId);
-                        }, TaskScheduler.Default);
+                        await Task.Delay(15000).ConfigureAwait(false);
+                        lock (connectionStateLock) pendingRelayTransitions.Remove(connectionId);
                     }
                     else
                     {

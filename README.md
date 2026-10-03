@@ -1,93 +1,97 @@
 # Valhalla
 
-A remote access framework built in Rust (server + agent) and C# (operator panel), designed around Tor onion services as the primary transport layer. Agents connect outbound through the Tor network to a hidden-service relay, which routes operator commands from the panel back to any connected agent — no open ports, no exposed IP, no static infrastructure for an agent to fingerprint or block.
+Only the chosen arrive here. Not by chance — by selection.
+
+Valhalla is a remote access framework built in Rust (server + agent) and C# (operator panel). Agents traverse the Tor network to reach the relay, which stands as the hall they all report back to. The operator sees every soul that checks in — hostname, user, hardware, privileges, heartbeat — and can reach any of them with a single command. No open ports. No exposed infrastructure. Nothing to find from the outside.
 
 ---
 
 ## Architecture
 
-Valhalla is structured as three components that communicate over authenticated WebSocket connections.
+Three components. Each with a role.
 
-**Relay server** (`server/`) — A Rust binary (`valhalla-relay`) that acts as the hub. It hosts a Tor v3 onion service using the [Arti](https://gitlab.torproject.org/tpo/core/arti) client library, accepts inbound agent connections, maintains an agent registry keyed by fingerprint, and exposes a TLS-secured panel gateway for operator sessions. Metrics are exposed over a local Unix socket consumed by the telemetry sidecar.
+**The Relay** (`server/`) — The hall itself. A Rust binary (`valhalla-relay`) that hosts a Tor v3 onion service through the [Arti](https://gitlab.torproject.org/tpo/core/arti) library, accepts inbound agents, maintains a registry of every connected session keyed by fingerprint, and holds a TLS-secured gateway open for the operator panel. Metrics flow out over a local Unix socket to a telemetry sidecar.
 
-**Agent** (`agent/`) — A Rust binary that runs on target Windows machines. On startup it derives a unique, stable fingerprint from the host hardware identity using HKDF-SHA256, signs a challenge with its Ed25519 key, and establishes an outbound WebSocket session through Tor to the relay's onion address. The connection endpoint is embedded in a compiled stub (`stub/stub.bin`) rather than passed on the command line. The agent handles commands dispatched from the relay, manages the plugin lifecycle, and performs in-place self-updates without dropping its session.
+**The Agent** (`agent/`) — The one who makes the journey. A Rust binary that runs on target Windows machines. On arrival it derives a stable identity from the host hardware using HKDF-SHA256, signs a challenge with its Ed25519 key, and establishes an outbound session through Tor to the relay's onion address. Its destination is baked into a compiled stub — not passed on the command line. It receives commands, manages plugins, and replaces itself in-place when called to without ever dropping its session.
 
-**Panel** (`panel/`) — A Windows Forms application built on DevExpress that connects operators to the relay's panel gateway over mutual TLS. It presents a live grid of connected agents with their telemetry (hostname, user, OS, hardware, privilege level, AV, ping), provides per-agent and broadcast command dispatch, a file manager, a plugin manager, live charts, Telegram notifications, and an agent builder that packages a configured agent binary for deployment.
+**The Panel** (`panel/`) — Where the operator sits. A Windows Forms application built on DevExpress that authenticates to the relay's panel gateway over mutual TLS. It presents a live grid of every connected agent with full telemetry, handles per-agent and broadcast command dispatch, exposes a file manager, a plugin manager, live charts, Telegram notifications, and an agent builder for packaging new deployments.
 
 ---
 
 ## Transport and Authentication
 
-Agents connect over Tor by default. The relay also supports a direct WebSocket mode (port 4794) that agents can switch to dynamically on operator instruction (`CMD:DIRECT_CONNECT`), with automatic fallback to the onion endpoint if the direct path fails.
+Agents travel through Tor by default. The relay also supports a direct WebSocket mode on port 4794 — agents can switch transports mid-session on operator instruction (`CMD:DIRECT_CONNECT`) and fall back automatically to the onion path if the direct route closes.
 
-Authentication is mutual and cryptographic. Each agent holds an Ed25519 signing key. The server maintains an `authorized_keys` file mapping agent fingerprints to their public keys. On connection the server issues a nonce challenge; the agent signs it; the server verifies the signature against the known public key for that fingerprint. Sessions that fail authentication within the configured timeout are dropped. Rate limiting, per-connection semaphores, and configurable inflight caps prevent abuse and resource exhaustion.
+Every agent carries an Ed25519 signing key. The relay holds an `authorized_keys` file mapping each agent's fingerprint to its public key. On connection the relay issues a nonce; the agent signs it; the signature is verified. Sessions that cannot prove their identity within the configured window are cut. Rate limiting, connection semaphores, and inflight caps hold the line against abuse.
 
-The panel gateway uses a separate HMAC-SHA256 TOTP-style mechanism over TLS, with an independent secret file and connection limit.
+The panel gateway runs its own HMAC-SHA256 challenge over TLS with a separate secret file and connection ceiling.
 
 ---
 
 ## Protocol
 
-The shared protocol crate (`server/protocol/`) defines the command vocabulary, maximum frame sizes, telemetry field limits, and control request/response structures used by both the relay and the panel.
+The shared protocol crate (`server/protocol/`) defines the full command vocabulary, frame size limits, telemetry field constraints, and control request/response structures that the relay and panel share.
 
 Agent commands follow a structured prefix scheme:
 
 | Prefix | Purpose |
 |---|---|
-| `REQ:DATA` | Request fresh telemetry from an agent |
+| `REQ:DATA` | Pull fresh telemetry from an agent |
 | `CMD:RECONNECT / CLOSE / SLEEP / HIBERNATE / RESTART / SHUTDOWN` | Session and power control |
 | `CMD:DIRECT_CONNECT / DIRECT_DISCONNECT` | Transport switching |
 | `CMD:PLUGIN_*` | Chunked plugin delivery and lifecycle |
-| `CMD:UPDATE_*` | Chunked in-place agent update |
+| `CMD:UPDATE_*` | Chunked in-place agent replacement |
 | `CMD:EXECUTE:` | Arbitrary payload execution |
 
-Commands are validated before dispatch; the relay refuses anything not matching the supported vocabulary.
+The relay validates every command before routing. Anything outside the known vocabulary is refused at the gate.
 
 ---
 
 ## Plugin System
 
-Agents support runtime-loadable plugins as native DLLs (Windows). Plugins expose three C-ABI entry points defined in `agent/plugin/valhalla_plugin.h`: `PluginOnLoad`, `PluginOnEvent`, and `PluginOnUnload`. The agent maps the plugin into executable memory, resolves its exports, invokes the load callback with the host context, and routes events bidirectionally between the plugin and the server. Built-in event types cover chunked file transfer; plugins may define their own event names for application-specific messaging.
+Agents carry the ability to receive and run native DLL plugins at runtime. Each plugin exposes three C-ABI entry points defined in `agent/plugin/valhalla_plugin.h`: `PluginOnLoad`, `PluginOnEvent`, and `PluginOnUnload`. The agent maps the plugin into executable memory, resolves its exports, fires the load callback, and routes events in both directions between plugin and server. Built-in events cover chunked file transfer; plugins can define any additional event names they need.
 
-The agent loads plugins from memory without touching disk beyond the initial delivery stage.
+Plugins are loaded entirely from memory. Nothing touches disk beyond the initial delivery.
 
 ---
 
 ## Agent Updates
 
-The update system (`agent/src/update.rs`) handles in-place binary replacement while the agent remains registered with the relay. The sequence uses a probe process, a SHA-256 integrity check on the replacement binary, a local TCP handoff handshake to transfer session continuity, and a final-ready acknowledgement before the predecessor exits. The replacement binary inherits the session endpoint and authentication key paths without re-authentication.
+When a new agent binary is sent down, the update system (`agent/src/update.rs`) handles the full handoff without losing the session. A probe process validates the replacement, SHA-256 integrity is checked, a local TCP handshake transfers continuity, and the predecessor exits only after the successor confirms it is ready. The new binary inherits the endpoint and key paths without re-authenticating.
+
+The hall never empties during a transfer.
 
 ---
 
 ## Telemetry
 
-On each connection the agent collects and transmits: hardware fingerprint, machine nickname, username, privilege level, OS version, CPU, GPU, RAM, antivirus presence, uptime, AFK state, and round-trip ping (for direct connections). The relay's panel hub caches the latest telemetry record per fingerprint and pushes updates to all active panel sessions over a broadcast channel.
+Each agent announces itself on arrival: hardware fingerprint, machine name, username, privilege level, OS, CPU, GPU, RAM, antivirus, uptime, AFK state, and ping. The relay's panel hub holds the latest record for every fingerprint and pushes live updates to all active operator sessions over a broadcast channel.
 
-A Python telemetry sidecar (`server/telemetry_service.py`) consumes the relay's local Unix socket and can relay commands via the control socket, providing a lightweight scriptable interface to the control plane without a full panel session.
+A Python sidecar (`server/telemetry_service.py`) consumes the relay's local Unix socket and exposes a scriptable interface to the control plane for operators who prefer to work without the full panel.
 
 ---
 
 ## Key Generation
 
-The `auth-keygen` tool (`server/tools/auth-keygen/`) generates Ed25519 keypairs for agent provisioning. The private seed goes into the agent's key file; the public key hex goes into the server's `authorized_keys` file alongside the fingerprint. Keys can be generated fresh or derived from a provided seed hex.
+The `auth-keygen` tool (`server/tools/auth-keygen/`) forges Ed25519 keypairs for agent provisioning. The private seed stays on the agent; the public key goes into the relay's `authorized_keys` file beside the fingerprint. Keys can be generated fresh or derived from a provided seed.
 
 ---
 
 ## Build and Deployment
 
-**Agent** builds for `x86_64-pc-windows-msvc` with Rust 1.92.0. Release profile uses `opt-level = 3`, LTO, single codegen unit, `panic = abort`, and symbol stripping for minimal binary size.
+**Agent** targets `x86_64-pc-windows-msvc` with Rust 1.92.0. Release builds use `opt-level = 3`, LTO, single codegen unit, `panic = abort`, and full symbol stripping.
 
-**Relay** builds for Linux on the same toolchain. The provided systemd unit (`server/deploy/systemd/valhalla-relay.service`) runs the relay under a dedicated `valhalla` user with `NoNewPrivileges`, `ProtectSystem=strict`, private tmp, and a 20,000 file descriptor limit.
+**Relay** builds on Linux with the same toolchain. The systemd unit at `server/deploy/systemd/valhalla-relay.service` runs the relay under a dedicated `valhalla` user with `NoNewPrivileges`, `ProtectSystem=strict`, private tmp, and a 20,000 file descriptor limit.
 
-**Panel** targets .NET Framework and is built as a Windows Forms application. The `panel/build/prepare_dependencies.py` script handles DevExpress and other native dependency preparation; `panel/build/dependency_manifest.json` pins versions.
+**Panel** targets .NET Framework as a Windows Forms application. `panel/build/prepare_dependencies.py` handles DevExpress and native dependency preparation; `panel/build/dependency_manifest.json` pins versions.
 
-CI runs on GitHub Actions: agent tests and release build on `windows-2022`, relay build and tests on `ubuntu-latest`, panel build on `windows-2022`.
+CI covers all three on GitHub Actions: agent on `windows-2022`, relay on `ubuntu-latest`, panel on `windows-2022`.
 
 ---
 
 ## Configuration Reference
 
-The relay accepts configuration entirely through command-line flags. Key parameters:
+The relay is configured entirely through flags at launch:
 
 | Flag | Default | Description |
 |---|---|---|
@@ -110,4 +114,4 @@ Educational Cybersecurity License (ECL) 1.0.
 
 ---
 
-*Some doors don't open from the outside.*
+*The fallen don't wander — they report.*

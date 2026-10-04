@@ -4,7 +4,6 @@ use crate::{stub, transport::Endpoint};
 
 pub struct Args {
     pub endpoint: Endpoint,
-    pub endpoint_display: String,
     pub auth_key_file: PathBuf,
     pub arti_state_dir: PathBuf,
     pub arti_cache_dir: PathBuf,
@@ -16,7 +15,7 @@ pub struct Args {
 }
 
 pub fn get() -> Args {
-    let (endpoint, endpoint_display, install_dir, folder_name) = match stub::load_config() {
+    let (endpoint, _endpoint_display, install_dir, folder_name) = match stub::load_config() {
         Ok(value) => value,
         Err(_) => std::process::exit(2),
     };
@@ -26,7 +25,6 @@ pub fn get() -> Args {
 
     Args {
         endpoint,
-        endpoint_display,
         auth_key_file,
         arti_state_dir,
         arti_cache_dir,

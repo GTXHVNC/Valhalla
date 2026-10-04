@@ -1,4 +1,4 @@
-use std::{io, path::{Path, PathBuf}, sync::Arc, time::Duration};
+use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tokio::time::{interval, sleep};
@@ -69,14 +69,10 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
                     &mut session,
                     &target,
                     &endpoint_path,
-                    &args.endpoint_display,
                     &fp,
                     &host,
                     &mut plugins,
                     args.heartbeat,
-                    &args.auth_key_file,
-                    &args.arti_state_dir,
-                    &args.arti_cache_dir,
                 ).await;
                 plugins.clear();
                 match action {
@@ -121,14 +117,10 @@ async fn ws_session(
     session: &mut Session,
     target: &str,
     endpoint_path: &str,
-    endpoint: &str,
     fp: &str,
     host: &str,
     plugins: &mut Manager,
     heartbeat: Duration,
-    auth_key_file: &Path,
-    arti_state_dir: &Path,
-    arti_cache_dir: &Path,
 ) -> SessionAction {
     let mut ticker = interval(heartbeat);
     let mut update_transfer: Option<UpdateTransfer> = None;
@@ -164,7 +156,7 @@ async fn ws_session(
                     Ok(Some(mut value)) if value.starts_with(text::CMD) => {
                         let sensitive_direct_command = starts_with_ascii_ci(value[text::CMD.len()..].trim_start(), text::DIRECT_CONNECT);
                         let raw = value[text::CMD.len()..].trim();
-                        let action = handle_command(session, raw, endpoint_path, endpoint, fp, host, plugins, &mut update_transfer, auth_key_file, arti_state_dir, arti_cache_dir).await;
+                        let action = handle_command(session, raw, endpoint_path, host, plugins, &mut update_transfer).await;
                         if sensitive_direct_command {
                             use zeroize::Zeroize;
                             value.zeroize();
@@ -207,14 +199,9 @@ async fn handle_command(
     session: &mut Session,
     raw: &str,
     endpoint_path: &str,
-    endpoint: &str,
-    fp: &str,
     host: &str,
     plugins: &mut Manager,
     update_transfer: &mut Option<UpdateTransfer>,
-    auth_key_file: &Path,
-    arti_state_dir: &Path,
-    arti_cache_dir: &Path,
 ) -> CommandResult {
     if starts_with_ascii_ci(raw, text::PLUGIN) {
         let rest = raw[text::PLUGIN.len()..].trim();

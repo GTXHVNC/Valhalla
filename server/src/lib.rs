@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, io, net::{IpAddr, SocketAddr}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, fmt::Debug, fs, io, net::{IpAddr, SocketAddr}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -7,6 +7,7 @@ use arti_client::{config::TorClientConfigBuilder, TorClient};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use futures_util::{SinkExt, StreamExt};
+use sha3::{Digest as Sha3Digest, Sha3_256};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UnixListener}, sync::{mpsc, OwnedSemaphorePermit, Semaphore, watch}, time::{interval, timeout}};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::{OnionServiceConfigBuilder, TokenBucketConfig}, RunningOnionService, StreamRequest};
@@ -315,10 +316,14 @@ impl Server {
         // Every subsequent panel_authenticated response will include this address, keeping
         // the panel's onion field refreshed on every reconnect.
         let onion_address_for_panel: Option<String> = onion_service.as_ref().and_then(|(service, _)| {
-            service.onion_address().map(|addr| {
-                let port = self.config.onion_port;
-                let path = &self.config.websocket_path;
-                format!("ws://{addr}.onion:{port}{path}")
+            service.onion_address().and_then(|addr| {
+                match format_onion_endpoint(&addr, self.config.onion_port, &self.config.websocket_path) {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        warn!(%error, "could not format the running onion service address for panel clients");
+                        None
+                    }
+                }
             })
         });
 
@@ -967,6 +972,167 @@ fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
         .max_write_buffer_size(64 * 1024)
         .max_message_size(Some(valhalla_protocol::MAX_WS_MESSAGE_BYTES))
         .max_frame_size(Some(valhalla_protocol::MAX_WS_MESSAGE_BYTES))
+}
+
+
+fn format_onion_endpoint<T: Debug>(address: &T, port: u16, path: &str) -> Result<String, String> {
+    if port == 0 {
+        return Err("onion endpoint port must not be zero".into());
+    }
+    let path = if path.is_empty() {
+        "/"
+    } else if path.starts_with('/') {
+        path
+    } else {
+        return Err("onion WebSocket path must start with '/'".into());
+    };
+
+    let debug = format!("{address:?}");
+    let host = extract_onion_host(&debug).ok_or_else(|| {
+        "unable to derive a 56-character v3 onion hostname from Arti HsId".to_owned()
+    })?;
+    Ok(format!("ws://{host}.onion:{port}{path}"))
+}
+
+fn extract_onion_host(debug: &str) -> Option<String> {
+    // Prefer a directly rendered 56-character v3 label when the dependency's
+    // Debug implementation exposes one.
+    let bytes = debug.as_bytes();
+    for start in 0..bytes.len() {
+        if !is_onion_base32(bytes[start]) {
+            continue;
+        }
+        let end = (start + 56).min(bytes.len());
+        if end - start == 56 && bytes[start..end].iter().all(|b| is_onion_base32(*b)) {
+            return Some(debug[start..end].to_ascii_lowercase());
+        }
+    }
+
+    // Some opaque ID Debug implementations print the underlying 32 bytes.
+    // Parse a bracketed decimal byte list and encode it using Tor's lower-case
+    // RFC 4648 base32 form (without padding).
+    let Some(open) = debug.find('[') else { return None; };
+    let close = debug[open + 1..].find(']')? + open + 1;
+    let mut values = Vec::new();
+    let mut decimal_form = true;
+    for token in debug[open + 1..close].split(',') {
+        let token = token.trim();
+        if token.is_empty() { continue; }
+        match token.parse::<u8>() {
+            Ok(value) => values.push(value),
+            Err(_) => {
+                decimal_form = false;
+                break;
+            }
+        }
+    }
+    if decimal_form && values.len() == 32 {
+        return Some(onion_v3_hostname(&values));
+    }
+
+    // Also tolerate an opaque Debug representation that exposes the key as
+    // a 64-character hexadecimal string.
+    let mut hex = None;
+    let mut run_start = 0usize;
+    let debug_bytes = debug.as_bytes();
+    while run_start < debug_bytes.len() {
+        let Some(rel) = debug[run_start..].find(|c: char| c.is_ascii_hexdigit()) else { break; };
+        let start = run_start + rel;
+        let end = (start + 64).min(debug_bytes.len());
+        if end - start == 64 && debug_bytes[start..end].iter().all(|b| b.is_ascii_hexdigit()) {
+            hex = Some(&debug_bytes[start..end]);
+            break;
+        }
+        run_start = start + 1;
+    }
+    let hex = hex?;
+    let mut raw = Vec::with_capacity(32);
+    for pair in hex.chunks_exact(2) {
+        raw.push((hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?);
+    }
+    Some(onion_v3_hostname(&raw))
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn is_onion_base32(byte: u8) -> bool {
+    byte.is_ascii_lowercase() && matches!(byte, b'a'..=b'z')
+        || matches!(byte, b'2'..=b'7')
+}
+
+fn onion_v3_hostname(public_key: &[u8]) -> String {
+    debug_assert_eq!(public_key.len(), 32);
+
+    // Tor v3 onion hostnames encode: 32-byte Ed25519 public key,
+    // 2-byte SHA3-256 checksum, then version byte 0x03.
+    let mut checksum = Sha3_256::new();
+    checksum.update(b".onion checksum");
+    checksum.update(public_key);
+    checksum.update([3]);
+    let checksum = checksum.finalize();
+
+    let mut encoded = [0u8; 35];
+    encoded[..32].copy_from_slice(public_key);
+    encoded[32..34].copy_from_slice(&checksum[..2]);
+    encoded[34] = 3;
+    base32_lower_no_pad(&encoded)
+}
+
+fn base32_lower_no_pad(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let mut output = String::with_capacity((bytes.len() * 8 + 4) / 5);
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+    for &byte in bytes {
+        buffer = (buffer << 8) | u32::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            output.push(ALPHABET[((buffer >> bits) & 0x1f) as usize] as char);
+        }
+        if bits == 0 {
+            buffer = 0;
+        } else {
+            buffer &= (1u32 << bits) - 1;
+        }
+    }
+    if bits > 0 {
+        output.push(ALPHABET[((buffer << (5 - bits)) & 0x1f) as usize] as char);
+    }
+    output
+}
+
+
+#[cfg(test)]
+mod onion_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn base32_encodes_32_bytes_to_56_chars() {
+        let encoded = onion_v3_hostname(&[0u8; 32]);
+        assert_eq!(encoded.len(), 56);
+        assert!(encoded.bytes().all(|byte| is_onion_base32(byte)));
+    }
+
+    #[test]
+    fn extracts_direct_debug_host() {
+        let host = "a".repeat(56);
+        let debug = format!("HsId(\\\"{host}\\\")");
+        assert_eq!(extract_onion_host(&debug), Some(host));
+    }
+
+    #[test]
+    fn extracts_decimal_byte_debug_form() {
+        let debug = "HsId([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])";
+        assert_eq!(extract_onion_host(debug).unwrap().len(), 56);
+    }
 }
 
 #[cfg(test)]

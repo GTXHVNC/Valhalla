@@ -35,6 +35,7 @@ impl Endpoint {
             let (host, port) = authority.rsplit_once(':').ok_or("endpoint must include a port")?;
             (host.to_owned(), parse_port(port)?)
         };
+        let host = host.to_ascii_lowercase();
         if host.is_empty() {
             return Err("endpoint host is empty".into());
         }
@@ -340,6 +341,13 @@ mod tests {
         assert!(Endpoint::parse(&onion).is_ok());
         assert!(Endpoint::parse("ws://127.0.0.1:4793/").is_ok());
         assert!(Endpoint::parse("ws://10.0.0.1:4793/").is_err());
+    }
+
+    #[test]
+    fn normalizes_onion_hostname_case() {
+        let upper = format!("ws://{}.ONION:443/ws", "A".repeat(56));
+        let endpoint = Endpoint::parse(&upper).expect("uppercase onion endpoint should normalize");
+        assert_eq!(endpoint.target().0, format!("{}.onion", "a".repeat(56)));
     }
 
     #[test]

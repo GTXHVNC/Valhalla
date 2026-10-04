@@ -1,4 +1,4 @@
-use std::{fs, io, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 use crate::transport::Endpoint;
 
@@ -81,6 +81,14 @@ pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String), St
         .map_err(|_| String::new())?;
     let display = cfg.onion.clone();
     Ok((endpoint, display, cfg.install_dir, cfg.folder_name))
+}
+
+/// Read only the connection endpoint from the embedded stub configuration.
+/// This is used by the update probe, which must operate before the normal
+/// argument/data-directory initialization performed by `args::get()`.
+pub(crate) fn load_endpoint() -> Result<(Endpoint, String), String> {
+    let (endpoint, display, _install_dir, _folder_name) = load_config()?;
+    Ok((endpoint, display))
 }
 
 fn parse_config(bytes: &[u8]) -> Option<Config> {

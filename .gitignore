@@ -33,3 +33,6 @@ Cargo.lock
 # OS/editor noise
 .DS_Store
 Thumbs.db
+
+# stub.bin is a compiled PE produced by CI — not a source file
+stub/stub.bin

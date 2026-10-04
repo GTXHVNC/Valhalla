@@ -17,6 +17,12 @@ namespace Valhalla
         public string CaCertificatePath { get; set; } = string.Empty;
         public string OnionAddress { get; set; } = string.Empty;
 
+        /// <summary>0=Roaming, 1=Local, 2=Temp, 3=ProgramFiles, 4=ProgramData</summary>
+        public int InstallDirectory { get; set; } = 1;
+
+        /// <summary>Folder name appended to the selected install directory.</summary>
+        public string FolderName { get; set; } = "Valhalla";
+
         [ScriptIgnore]
         public string AuthenticationSecret
         {
@@ -33,7 +39,9 @@ namespace Valhalla
                 PanelId = PanelId ?? "panel-01",
                 AuthenticationSecretProtected = AuthenticationSecretProtected ?? string.Empty,
                 CaCertificatePath = CaCertificatePath ?? string.Empty,
-                OnionAddress = OnionAddress ?? string.Empty
+                OnionAddress = OnionAddress ?? string.Empty,
+                InstallDirectory = InstallDirectory,
+                FolderName = string.IsNullOrEmpty(FolderName) ? "Valhalla" : FolderName
             };
         }
 

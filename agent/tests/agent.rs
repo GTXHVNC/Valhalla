@@ -26,7 +26,7 @@ fn transport_contract() {
 
     let args = std::fs::read_to_string("src/args.rs").unwrap();
     assert!(!args.contains("VALHALLA_ENDPOINT"));
-    assert!(args.contains("stub::load_endpoint"));
+    assert!(args.contains("stub::load_config"));
     assert!(args.contains("VALHALLA_AUTH_KEY_FILE"));
 }
 

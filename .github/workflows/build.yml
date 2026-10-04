@@ -54,15 +54,34 @@ jobs:
         shell: pwsh
         run: |
           cargo build --release --manifest-path Cargo.toml --bin valhalla_agent
-          $path = 'target\release\valhalla_agent.exe'
-          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Agent executable was not produced: $path" }
-          if ((Get-Item -LiteralPath $path).Length -le 0) { throw 'Agent executable is empty.' }
+          $exe = 'target\release\valhalla_agent.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Agent executable was not produced: $exe"
+          }
+          if ((Get-Item -LiteralPath $exe).Length -le 0) {
+            throw 'Agent executable is empty.'
+          }
 
-      - name: Upload agent
+      - name: Produce stub.bin
+        shell: pwsh
+        run: |
+          # The compiled PE is the stub template. Rename it .bin so the panel
+          # treats it as a raw binary blob rather than an executable, exactly
+          # as the architecture requires (valid PE, non-.exe extension).
+          $exe  = 'target\release\valhalla_agent.exe'
+          $stub = 'target\release\stub.bin'
+          Copy-Item -LiteralPath $exe -Destination $stub -Force
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $stub).Path)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw 'stub.bin MZ header check failed.'
+          }
+          Write-Host "stub.bin produced: $([System.IO.FileInfo]$stub | Select-Object -Expand Length) bytes"
+
+      - name: Upload stub.bin
         uses: actions/upload-artifact@v4
         with:
-          name: valhalla-agent-windows-x64
-          path: agent/target/release/valhalla_agent.exe
+          name: valhalla-agent-stub
+          path: agent/target/release/stub.bin
           if-no-files-found: error
 
   server:
@@ -117,6 +136,7 @@ jobs:
 
   panel:
     name: Build Valhalla Panel
+    needs: [agent]
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -125,6 +145,27 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
+
+      - name: Download stub.bin
+        uses: actions/download-artifact@v4
+        with:
+          name: valhalla-agent-stub
+          path: stub-artifact
+
+      - name: Place stub.bin for panel build
+        shell: pwsh
+        run: |
+          # Place stub.bin at stub/stub.bin so the panel's LocateStub() finds it
+          # when walking up from panel/bin/Release/, and also embed it into the
+          # panel output directory so it ships alongside Valhalla.exe.
+          New-Item -ItemType Directory -Force -Path stub | Out-Null
+          Copy-Item -LiteralPath stub-artifact\stub.bin -Destination stub\stub.bin -Force
+
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path stub\stub.bin).Path)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw 'stub\stub.bin MZ header check failed after download.'
+          }
+          Write-Host "stub\stub.bin ready: $($bytes.Length) bytes"
 
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v3
@@ -136,16 +177,18 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $project = Join-Path $PWD 'panel\Valhalla.csproj'
+          $project  = Join-Path $PWD 'panel\Valhalla.csproj'
           $manifest = Join-Path $PWD 'panel\build\dependency_manifest.json'
-          $deps = Join-Path $PWD 'panel\build\dependencies'
+          $deps     = Join-Path $PWD 'panel\build\dependencies'
           foreach ($path in @($project, $manifest, $deps)) {
             if (-not (Test-Path -LiteralPath $path)) { throw "Required panel build input is missing: $path" }
           }
           $required = @(Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).required_files
           foreach ($entry in $required) {
             $path = Join-Path $deps $entry.filename
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing prepared DevExpress/runtime dependency: $($entry.filename)" }
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing prepared DevExpress/runtime dependency: $($entry.filename)"
+            }
           }
           Write-Host "Panel inputs validated: $($required.Count) runtime dependencies + map data."
 
@@ -161,8 +204,24 @@ jobs:
         shell: pwsh
         run: |
           $output = Join-Path $PWD 'panel\bin\Release\Valhalla.exe'
-          if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw "Panel executable was not produced: $output" }
-          if ((Get-Item -LiteralPath $output).Length -le 0) { throw 'Panel executable is empty.' }
+          if (-not (Test-Path -LiteralPath $output -PathType Leaf)) {
+            throw "Panel executable was not produced: $output"
+          }
+          if ((Get-Item -LiteralPath $output).Length -le 0) {
+            throw 'Panel executable is empty.'
+          }
+
+      - name: Embed stub.bin into panel output
+        shell: pwsh
+        run: |
+          # Place stub.bin at panel/bin/Release/stub/stub.bin so it ships
+          # alongside Valhalla.exe in the artifact and in the release bundle.
+          # LocateStub() will find it at depth 0 when the panel is run from
+          # that directory: panel\bin\Release\ → looks for stub\stub.bin there.
+          $dest = Join-Path $PWD 'panel\bin\Release\stub'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -LiteralPath stub\stub.bin -Destination "$dest\stub.bin" -Force
+          Write-Host "stub.bin embedded at $dest\stub.bin"
 
       - name: Upload panel
         uses: actions/upload-artifact@v4
@@ -208,7 +267,9 @@ jobs:
                   '73637265656e73686f74',
               )
           ]
-          binary_suffixes = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.dll', '.exe', '.pdb'}
+          # .bin is treated as binary — skip text scanning for it.
+          binary_suffixes = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico',
+                             '.dll', '.exe', '.pdb', '.bin'}
           for path in Path('.').rglob('*'):
               if not path.is_file() or '.git' in path.parts:
                   continue
@@ -243,7 +304,7 @@ jobs:
           tree = ET.parse(resx)
           for data in tree.getroot().findall('data'):
               value = data.findtext('value', '')
-              if ';' not in value or not value.startswith('..\\'): continue
+              if ';' not in value or not value.startswith('..\\'):  continue
               rel = value.split(';', 1)[0].replace('\\', '/')
               target = (resx.parent / rel).resolve()
               assert target.is_file(), f'missing resource file: {target}'
@@ -264,11 +325,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release/agent release/server release/panel
-          cp artifacts/valhalla-agent-windows-x64/valhalla_agent.exe release/agent/valhalla_agent.exe
-          cp artifacts/valhalla-relay-linux-x64/valhalla-relay release/server/valhalla-relay
+          mkdir -p release/server release/panel
+
+          # Panel ships with stub/stub.bin already embedded inside the panel
+          # artifact (placed there by the panel job).  Copy the whole panel
+          # directory including the stub/ subdirectory.
           cp -a artifacts/valhalla-panel-windows-x64/. release/panel/
-          tar -C release -czf valhalla-build-${GITHUB_SHA}.tgz agent server panel
+
+          # Also place stub.bin at release/stub/stub.bin so LocateStub() finds
+          # it when walking up from release/panel/ → release/ → stub/stub.bin.
+          mkdir -p release/stub
+          cp artifacts/valhalla-agent-stub/stub.bin release/stub/stub.bin
+
+          cp artifacts/valhalla-relay-linux-x64/valhalla-relay release/server/valhalla-relay
+
+          tar -C release -czf valhalla-build-${GITHUB_SHA}.tgz server panel stub
 
       - name: Upload release bundle
         uses: actions/upload-artifact@v4

@@ -1401,10 +1401,7 @@ pub(crate) fn maybe_run_probe(args: &[String]) -> bool {
     if args.iter().any(|argument| argument == PROBE_FLAG) {
         match probe_entry(args) {
             Ok(()) => std::process::exit(0),
-            Err(error) => {
-                eprintln!("Valhalla update probe failed: {error}");
-                std::process::exit(1);
-            }
+            Err(_) => std::process::exit(1),
         }
     }
     false
@@ -1414,16 +1411,12 @@ pub(crate) fn maybe_run_successor(args: &[String]) -> bool {
     match successor_args(args) {
         Ok(None) => false,
         Ok(Some(successor)) => {
-            if let Err(error) = run_successor(successor) {
-                eprintln!("Valhalla update successor failed: {error}");
+            if run_successor(successor).is_err() {
                 std::process::exit(1);
             }
             std::process::exit(0);
         }
-        Err(error) => {
-            eprintln!("Valhalla update successor arguments invalid: {error}");
-            std::process::exit(2);
-        }
+        Err(_) => std::process::exit(2),
     }
 }
 

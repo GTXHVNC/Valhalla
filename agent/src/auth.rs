@@ -1,4 +1,4 @@
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{fs, io, path::PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
@@ -7,11 +7,10 @@ use crate::transport::ClientIdentity;
 
 const RAW_KEY_BYTES: usize = 32;
 
-pub fn load_signing_key(path: &Path) -> io::Result<SigningKey> {
-    let bytes = fs::read(path).map_err(|error| {
-        io::Error::new(error.kind(), format!("unable to read authentication key {}: {error}", path.display()))
-    })?;
-    parse_signing_key(&bytes).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "authentication key must be a 32-byte seed or 64 hexadecimal characters"))
+pub fn load_signing_key(path: &std::path::Path) -> io::Result<SigningKey> {
+    let bytes = fs::read(path)?;
+    parse_signing_key(&bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, ""))
 }
 
 fn parse_signing_key(bytes: &[u8]) -> Option<SigningKey> {

@@ -62,6 +62,7 @@ pub struct PanelConfig {
     pub handshake_timeout: Duration,
     pub idle_timeout: Duration,
     pub max_requests_per_second: u32,
+    pub onion_address: Option<String>,
 }
 
 pub async fn run(listener: TcpListener, tls: Arc<TlsAcceptor>, config: PanelConfig, hub: PanelHub, limit: Arc<Semaphore>, server: crate::Server, shutdown: tokio::sync::watch::Receiver<bool>) {
@@ -152,7 +153,12 @@ async fn handle_connection(
         mac.update(&[0]);
         mac.update(&challenge);
         if mac.verify_slice(&supplied).is_ok() {
-            write_json(&mut writer, &PanelAuthenticated { protocol_version: 1, message_type: "panel_authenticated", expires_at_ms }).await?;
+            write_json(&mut writer, &PanelAuthenticated {
+                protocol_version: 1,
+                message_type: "panel_authenticated",
+                expires_at_ms,
+                onion_address: config.onion_address.as_deref(),
+            }).await?;
             info!(peer = %peer, panel_id = %config.panel_id, "panel authenticated");
             return stream_events(reader, writer, hub, server, config.idle_timeout, config.max_requests_per_second).await;
         }
@@ -311,10 +317,12 @@ struct PanelProof {
 }
 
 #[derive(Debug, Serialize)]
-struct PanelAuthenticated {
+struct PanelAuthenticated<'a> {
     protocol_version: u16,
     message_type: &'static str,
     expires_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    onion_address: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]

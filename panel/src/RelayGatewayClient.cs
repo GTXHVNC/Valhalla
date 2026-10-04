@@ -60,6 +60,7 @@ namespace Valhalla
         public event Action<RelayTelemetryEvent> TelemetryReceived;
         public event Action<RelayCommandResult> CommandResultReceived;
         public event Action<string> Disconnected;
+        public event Action<string> OnionAddressReceived;
 
         public bool IsConnected => !stopping && client != null && client.Connected && ssl != null;
 
@@ -243,6 +244,13 @@ namespace Valhalla
                         throw new AuthenticationException("Relay authentication session is already expired.");
                     ssl.ReadTimeout = Timeout.Infinite;
                     if (client?.Client != null) client.Client.ReceiveTimeout = 0;
+
+                    // Relay transmits the onion address on every successful auth — fire the event
+                    // so the panel can write it to the onion field and persist it immediately.
+                    string onion = GetString(response, "onion_address");
+                    if (!string.IsNullOrWhiteSpace(onion))
+                        OnionAddressReceived?.Invoke(onion.Trim());
+
                     return;
                 }
             }

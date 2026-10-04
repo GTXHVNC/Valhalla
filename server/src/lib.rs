@@ -286,24 +286,7 @@ impl Server {
             let server = self.clone_for_task();
             tokio::spawn(async move { server.accept_tcp(direct_listener).await })
         };
-        let panel_task = panel_listener.map(|(listener, tls)| {
-            info!(address = ?self.config.panel_listen, "external panel gateway enabled (TLS + HMAC challenge/response; telemetry + authenticated commands)");
-            let panel_config = panel::PanelConfig {
-                cert: self.config.panel_cert.clone(),
-                key: self.config.panel_key.clone(),
-                secret_file: self.config.panel_secret_file.clone(),
-                panel_id: self.config.panel_id.clone(),
-                handshake_timeout: self.config.auth_timeout,
-                idle_timeout: self.config.idle_timeout,
-                max_requests_per_second: self.config.max_control_requests_per_second,
-            };
-            let hub = self.panel_hub.clone();
-            let limit = Arc::new(Semaphore::new(self.config.panel_max_connections));
-            let server_for_panel = self.clone_for_task();
-            let shutdown = self.shutdown.subscribe();
-            tokio::spawn(async move { panel::run(listener, tls, panel_config, hub, limit, server_for_panel, shutdown).await })
-        });
-
+        // Start the onion service first so its address is available for the panel auth response.
         let onion_service = if self.config.enable_onion {
             let (service, request_stream) = match self.launch_onion_service().await {
                 Ok(value) => value,
@@ -326,6 +309,37 @@ impl Server {
         } else {
             None
         };
+
+        // Derive the onion address string for inclusion in the panel authentication response.
+        // The relay is already running at this point; the panel has not yet connected.
+        // Every subsequent panel_authenticated response will include this address, keeping
+        // the panel's onion field refreshed on every reconnect.
+        let onion_address_for_panel: Option<String> = onion_service.as_ref().and_then(|(service, _)| {
+            service.onion_address().map(|addr| {
+                let port = self.config.onion_port;
+                let path = &self.config.websocket_path;
+                format!("ws://{addr}.onion:{port}{path}")
+            })
+        });
+
+        let panel_task = panel_listener.map(|(listener, tls)| {
+            info!(address = ?self.config.panel_listen, "external panel gateway enabled (TLS + HMAC challenge/response; telemetry + authenticated commands)");
+            let panel_config = panel::PanelConfig {
+                cert: self.config.panel_cert.clone(),
+                key: self.config.panel_key.clone(),
+                secret_file: self.config.panel_secret_file.clone(),
+                panel_id: self.config.panel_id.clone(),
+                handshake_timeout: self.config.auth_timeout,
+                idle_timeout: self.config.idle_timeout,
+                max_requests_per_second: self.config.max_control_requests_per_second,
+                onion_address: onion_address_for_panel,
+            };
+            let hub = self.panel_hub.clone();
+            let limit = Arc::new(Semaphore::new(self.config.panel_max_connections));
+            let server_for_panel = self.clone_for_task();
+            let shutdown = self.shutdown.subscribe();
+            tokio::spawn(async move { panel::run(listener, tls, panel_config, hub, limit, server_for_panel, shutdown).await })
+        });
 
         let metrics_task = {
             let metrics = Arc::clone(&self.metrics);

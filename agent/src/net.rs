@@ -156,7 +156,7 @@ async fn ws_session(
                     Ok(Some(mut value)) if value.starts_with(text::CMD) => {
                         let sensitive_direct_command = starts_with_ascii_ci(value[text::CMD.len()..].trim_start(), text::DIRECT_CONNECT);
                         let raw = value[text::CMD.len()..].trim();
-                        let action = handle_command(session, raw, endpoint_path, host, plugins, &mut update_transfer).await;
+                        let action = handle_command(session, raw, endpoint_path, fp, host, plugins, &mut update_transfer).await;
                         if sensitive_direct_command {
                             use zeroize::Zeroize;
                             value.zeroize();
@@ -199,6 +199,7 @@ async fn handle_command(
     session: &mut Session,
     raw: &str,
     endpoint_path: &str,
+    fp: &str,
     host: &str,
     plugins: &mut Manager,
     update_transfer: &mut Option<UpdateTransfer>,

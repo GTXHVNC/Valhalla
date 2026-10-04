@@ -961,7 +961,6 @@ fn hex32(value: &str) -> Option<[u8; 32]> {
     for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() { out[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?; }
     Some(out)
 }
-fn hex_nibble(value: u8) -> Option<u8> { match value { b'0'..=b'9'=>Some(value-b'0'), b'a'..=b'f'=>Some(value-b'a'+10), b'A'..=b'F'=>Some(value-b'A'+10), _=>None } }
 fn protocol_err(error: valhalla_protocol::ProtocolError) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, error.to_string()) }
 fn ws_err(error: tokio_tungstenite::tungstenite::Error) -> io::Error { io::Error::new(io::ErrorKind::Other, error.to_string()) }
 

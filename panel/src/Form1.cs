@@ -3632,14 +3632,6 @@ namespace Valhalla
 
         private void ConfigureAgentBuildUi()
         {
-            // Hide legacy stub controls that no longer apply to the Rust agent.
-            checkEdit1.Visible = false;
-            checkEdit2.Visible = false;
-            checkEdit3.Visible = false;
-            checkEdit4.Visible = false;
-            textEdit5.Visible  = false;
-            label53.Visible    = false;
-            textEdit3.Visible  = false;
             OpenFileDialogIcon = string.Empty;
 
             // Rename the builder page header label from legacy "Build Payload (.exe)" to current purpose.
@@ -3648,8 +3640,7 @@ namespace Valhalla
             // Rename the sidebar navigation item to reflect current purpose.
             accordionControlElement6.Text = "Build";
 
-            // Hide the legacy "Convert To (.dll)" sidebar entry and its tab page — these
-            // are not applicable to the Rust stub-based agent build workflow.
+            // Hide the legacy "Convert To (.dll)" sidebar entry and its tab page.
             accordionControlElement7.Visible = false;
             xtraTabPage6.PageVisible        = false;
 
@@ -3658,23 +3649,66 @@ namespace Valhalla
             accordionControlElement13.Visible = false;
             xtraTabPage9.PageVisible          = false;
 
-            // Configure the existing onion address field.
-            label54.Text = "Onion Address";
-            textEdit4.Properties.AllowFocused = true;
-            textEdit4.EditValue = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.OnionAddress)
-                ? relaySettings.OnionAddress
-                : string.Empty;
+            // ── Strip the dead space from panelControl19 ────────────────────
+            // The designer placed 5 legacy controls (checkEdit1-4, textEdit5) with
+            // DockStyle.Top — they consume ~100px even when invisible.  Remove them
+            // from the dock chain entirely so they produce no layout space.
+            foreach (var c in new System.Windows.Forms.Control[]
+                { checkEdit1, checkEdit2, checkEdit3, checkEdit4, textEdit5, label53, textEdit3 })
+            {
+                c.Dock    = DockStyle.None;
+                c.Visible = false;
+                c.Size    = Size.Empty;
+            }
 
-            // Restore persisted install-dir and folder-name values.
+            // Also undock label54 / textEdit4 / simpleButton6 so we can
+            // position everything ourselves without competing dock stacks.
+            label54.Dock     = DockStyle.None;
+            textEdit4.Dock   = DockStyle.None;
+            simpleButton6.Dock = DockStyle.None;
+
+            // ── Restore persisted values ────────────────────────────────────
             if (relaySettings != null)
             {
                 _selectedInstallDir = relaySettings.InstallDirectory;
                 if (_selectedInstallDir < 0 || _selectedInstallDir > 4) _selectedInstallDir = 1;
             }
 
-            // ── Install Directory toggle group ──────────────────────────────
-            // Placed directly above the BUILD button inside panelControl19.
-            // Uses the same visual design as the Notifications pill toggles.
+            // ── Build the content panel that replaces panelControl19's interior ─
+            // Layout (top → bottom, left-indented by pictureEdit13 = 50px):
+            //   16px  "Onion Address" label
+            //   26px  textEdit4 (onion address field)
+            //   18px  gap
+            //   16px  "Install Directory" label   |  "Folder Name" label
+            //   30px  toggle buttons row          |  folder textbox
+            //   18px  gap
+            //   32px  BUILD button
+            // Total ≈ 156px  →  panelControl19 shrunk to 160px (+ 2px border padding each side)
+
+            const int leftPad  = 52;   // width of pictureEdit13 + panel border
+            const int rightPad = 4;
+            const int rowH     = 26;
+            const int btnH     = 32;
+            const int labelH   = 16;
+            const int gap      = 12;
+
+            // Configure existing onion address label + field
+            label54.Text      = "Onion Address";
+            label54.AutoSize  = true;
+            label54.Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            label54.ForeColor = Color.FromArgb(160, 160, 160);
+            label54.BackColor = Color.Transparent;
+
+            textEdit4.Properties.AllowFocused = true;
+            textEdit4.EditValue = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.OnionAddress)
+                ? relaySettings.OnionAddress
+                : string.Empty;
+
+            // Configure existing BUILD button
+            simpleButton6.Dock = DockStyle.None;
+            simpleButton6.Height = btnH;
+
+            // ── Install Directory label + toggles ───────────────────────────
             var installDirLabel = new System.Windows.Forms.Label
             {
                 AutoSize  = true,
@@ -3689,10 +3723,12 @@ namespace Valhalla
 
             var toggleRow = new System.Windows.Forms.FlowLayoutPanel
             {
-                AutoSize     = true,
+                AutoSize      = true,
                 FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight,
-                WrapContents = false,
-                BackColor    = Color.Transparent,
+                WrapContents  = false,
+                BackColor     = Color.Transparent,
+                Margin        = Padding.Empty,
+                Padding       = Padding.Empty,
             };
 
             for (int i = 0; i < dirNames.Length; i++)
@@ -3728,7 +3764,7 @@ namespace Valhalla
                 toggleRow.Controls.Add(btn);
             }
 
-            // ── Folder Name text field ───────────────────────────────────────
+            // ── Folder Name label + textbox ──────────────────────────────────
             var folderLabel = new System.Windows.Forms.Label
             {
                 AutoSize  = true,
@@ -3740,14 +3776,14 @@ namespace Valhalla
 
             _folderNameBox = new System.Windows.Forms.TextBox
             {
-                Width     = 200,
-                Height    = 24,
-                Text      = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.FolderName)
-                                ? relaySettings.FolderName
-                                : "Valhalla",
-                Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
-                ForeColor = Color.White,
-                BackColor = Color.FromArgb(58, 58, 58),
+                Width       = 200,
+                Height      = 28,
+                Text        = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.FolderName)
+                                  ? relaySettings.FolderName
+                                  : "Valhalla",
+                Font        = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor   = Color.White,
+                BackColor   = Color.FromArgb(58, 58, 58),
                 BorderStyle = BorderStyle.FixedSingle,
             };
             _folderNameBox.TextChanged += (s, e) =>
@@ -3759,56 +3795,71 @@ namespace Valhalla
                 }
             };
 
-            // ── Folder Name stack (label + textbox) ─────────────────────────
-            var folderStack = new System.Windows.Forms.FlowLayoutPanel
+            // ── Lay everything out with explicit coordinates ─────────────────
+            // We use a single transparent host panel that fills panelControl19
+            // to the right of pictureEdit13, so we own the coordinate space.
+            var host = new System.Windows.Forms.Panel
             {
-                FlowDirection = System.Windows.Forms.FlowDirection.TopDown,
-                AutoSize      = true,
-                WrapContents  = false,
-                BackColor     = Color.Transparent,
-            };
-            folderStack.Controls.Add(folderLabel);
-            folderStack.Controls.Add(_folderNameBox);
-
-            // ── Install Directory stack (label + toggleRow) ──────────────────
-            var installStack = new System.Windows.Forms.FlowLayoutPanel
-            {
-                FlowDirection = System.Windows.Forms.FlowDirection.TopDown,
-                AutoSize      = true,
-                WrapContents  = false,
-                BackColor     = Color.Transparent,
-            };
-            installStack.Controls.Add(installDirLabel);
-            installStack.Controls.Add(toggleRow);
-
-            // ── Two-column table: install dir (left, grows) | folder name (right, fixed) ─
-            var configTable = new System.Windows.Forms.TableLayoutPanel
-            {
-                ColumnCount   = 2,
-                RowCount      = 1,
-                Dock          = DockStyle.Fill,
-                BackColor     = Color.Transparent,
-                Padding       = new Padding(0, 8, 0, 8),
-            };
-            configTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            configTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 240F));
-            configTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            configTable.Controls.Add(installStack, 0, 0);
-            configTable.Controls.Add(folderStack,  1, 0);
-
-            // ── Outer container docked to bottom of panelControl19 ──────────
-            var configContainer = new System.Windows.Forms.Panel
-            {
-                Dock      = DockStyle.Bottom,
-                Height    = 68,
                 BackColor = Color.Transparent,
+                Dock      = DockStyle.Fill,
             };
-            configContainer.Controls.Add(configTable);
 
-            // Grow panelControl19 to make room for the config row above BUILD.
-            panelControl19.Height += 68;
+            // Row positions
+            int y = 10;
 
-            panelControl19.Controls.Add(configContainer);
+            label54.Location  = new Point(0, y);
+            y += labelH + 4;
+            textEdit4.Location = new Point(0, y);
+            textEdit4.Height   = rowH;
+            y += rowH + gap;
+
+            installDirLabel.Location = new Point(0, y);
+            // Folder Name label aligned to same row
+            folderLabel.Location     = new Point(host.Width > 0 ? host.Width - 210 : 820, y);
+            y += labelH + 4;
+
+            toggleRow.Location    = new Point(0, y);
+            _folderNameBox.Location = new Point(host.Width > 0 ? host.Width - 210 : 820, y);
+            _folderNameBox.Height   = 28;
+            y += 30 + gap;
+
+            simpleButton6.Location = new Point(0, y);
+            int totalH = y + btnH + 10;
+
+            host.Controls.Add(label54);
+            host.Controls.Add(textEdit4);
+            host.Controls.Add(installDirLabel);
+            host.Controls.Add(folderLabel);
+            host.Controls.Add(toggleRow);
+            host.Controls.Add(_folderNameBox);
+            host.Controls.Add(simpleButton6);
+
+            // Reposition folderLabel and _folderNameBox when host resizes
+            host.Resize += (s, e) =>
+            {
+                int rightX = host.Width - _folderNameBox.Width - 4;
+                folderLabel.Left     = rightX;
+                _folderNameBox.Left  = rightX;
+                textEdit4.Width      = host.Width - 4;
+                simpleButton6.Width  = host.Width - 4;
+                toggleRow.Width      = rightX - 8;
+            };
+
+            // Shrink panelControl19 to eliminate the dead space from hidden controls.
+            // Original: 224px. We need: padding(2) + totalH + padding(2).
+            panelControl19.Height = totalH + 4;
+
+            // Remove all existing children from panelControl19 except pictureEdit13,
+            // then add our host panel which fills the remaining space.
+            var keepControls = new System.Windows.Forms.Control[] { pictureEdit13 };
+            for (int i = panelControl19.Controls.Count - 1; i >= 0; i--)
+            {
+                if (Array.IndexOf(keepControls, panelControl19.Controls[i]) < 0)
+                    panelControl19.Controls.RemoveAt(i);
+            }
+
+            // pictureEdit13 is DockStyle.Left — host fills the rest
+            panelControl19.Controls.Add(host);
         }
 
         private static void UpdateInstallDirButtonStyle(System.Windows.Forms.Button btn, bool selected)

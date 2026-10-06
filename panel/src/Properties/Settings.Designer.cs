@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-namespace FluentDesignForm.Properties
+namespace Valhalla.Properties
 {
 
 

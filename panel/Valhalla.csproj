@@ -174,12 +174,14 @@
     <Compile Include="src\Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="src\Form1.resx">
       <DependentUpon>Form1.cs</DependentUpon>
+      <LogicalName>Valhalla.Form1.resources</LogicalName>
     </EmbeddedResource>
     <None Include="src\Properties\licenses.licx" />
     <EmbeddedResource Include="src\Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
       <SubType>Designer</SubType>
+      <LogicalName>Valhalla.Properties.Resources.resources</LogicalName>
     </EmbeddedResource>
     <Compile Include="src\Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>

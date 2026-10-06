@@ -3646,12 +3646,17 @@ namespace Valhalla
             label52.Text = "Build Agent";
 
             // Rename the sidebar navigation item to reflect current purpose.
-            accordionControlElement6.Text = "Build Agent";
+            accordionControlElement6.Text = "Build";
 
             // Hide the legacy "Convert To (.dll)" sidebar entry and its tab page — these
             // are not applicable to the Rust stub-based agent build workflow.
             accordionControlElement7.Visible = false;
             xtraTabPage6.PageVisible        = false;
+
+            // Remove the About category and About Us page from the sidebar and tab strip.
+            accordionControlElement12.Visible = false;
+            accordionControlElement13.Visible = false;
+            xtraTabPage9.PageVisible          = false;
 
             // Configure the existing onion address field.
             label54.Text = "Onion Address";
@@ -3754,24 +3759,54 @@ namespace Valhalla
                 }
             };
 
-            // ── Combine into a container panel and inject into panelControl19 ─
+            // ── Folder Name stack (label + textbox) ─────────────────────────
+            var folderStack = new System.Windows.Forms.FlowLayoutPanel
+            {
+                FlowDirection = System.Windows.Forms.FlowDirection.TopDown,
+                AutoSize      = true,
+                WrapContents  = false,
+                BackColor     = Color.Transparent,
+            };
+            folderStack.Controls.Add(folderLabel);
+            folderStack.Controls.Add(_folderNameBox);
+
+            // ── Install Directory stack (label + toggleRow) ──────────────────
+            var installStack = new System.Windows.Forms.FlowLayoutPanel
+            {
+                FlowDirection = System.Windows.Forms.FlowDirection.TopDown,
+                AutoSize      = true,
+                WrapContents  = false,
+                BackColor     = Color.Transparent,
+            };
+            installStack.Controls.Add(installDirLabel);
+            installStack.Controls.Add(toggleRow);
+
+            // ── Two-column table: install dir (left, grows) | folder name (right, fixed) ─
+            var configTable = new System.Windows.Forms.TableLayoutPanel
+            {
+                ColumnCount   = 2,
+                RowCount      = 1,
+                Dock          = DockStyle.Fill,
+                BackColor     = Color.Transparent,
+                Padding       = new Padding(0, 8, 0, 8),
+            };
+            configTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            configTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 240F));
+            configTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            configTable.Controls.Add(installStack, 0, 0);
+            configTable.Controls.Add(folderStack,  1, 0);
+
+            // ── Outer container docked to bottom of panelControl19 ──────────
             var configContainer = new System.Windows.Forms.Panel
             {
                 Dock      = DockStyle.Bottom,
-                Height    = 72,
+                Height    = 68,
                 BackColor = Color.Transparent,
-                Padding   = new Padding(0, 4, 0, 0),
             };
+            configContainer.Controls.Add(configTable);
 
-            installDirLabel.Location = new Point(0, 4);
-            toggleRow.Location       = new Point(0, 24);
-            folderLabel.Location     = new Point(562, 4);
-            _folderNameBox.Location  = new Point(562, 22);
-
-            configContainer.Controls.Add(installDirLabel);
-            configContainer.Controls.Add(toggleRow);
-            configContainer.Controls.Add(folderLabel);
-            configContainer.Controls.Add(_folderNameBox);
+            // Grow panelControl19 to make room for the config row above BUILD.
+            panelControl19.Height += 68;
 
             panelControl19.Controls.Add(configContainer);
         }
@@ -5312,16 +5347,12 @@ namespace Valhalla
             accordionControlElement1.Text = "Dashboard";
             accordionControlElement5.Text = "Builder";
             accordionControlElement9.Text = "System";
-            accordionControlElement12.Text = "About";
-
             ConfigureSidebarGroupAppearance(accordionControlElement1);
             ConfigureSidebarGroupAppearance(accordionControlElement5);
             ConfigureSidebarGroupAppearance(accordionControlElement9);
-            ConfigureSidebarGroupAppearance(accordionControlElement12);
             ConfigureSidebarItemAppearance(accordionControlElement1);
             ConfigureSidebarItemAppearance(accordionControlElement5);
             ConfigureSidebarItemAppearance(accordionControlElement9);
-            ConfigureSidebarItemAppearance(accordionControlElement12);
             ApplySidebarIcons();
         }
 
@@ -5457,8 +5488,7 @@ namespace Valhalla
             AssignSidebarIcon(serverLogsNavigationElement, "sidebar_notifications.svg");
             AssignSidebarIcon(pluginManagerNavigationElement, "sidebar_plugin_manager.svg");
             AssignSidebarIcon(blockedConnectionsNavigationElement, "sidebar_blocked.svg");
-            AssignSidebarIcon(accordionControlElement12, "sidebar_about.svg");
-            AssignSidebarIcon(accordionControlElement13, "sidebar_about_user.svg");
+
         }
 
         private void AssignSidebarIcon(DevExpress.XtraBars.Navigation.AccordionControlElement element, string fileName)
@@ -5600,7 +5630,7 @@ namespace Valhalla
             DisposeConnectionMenuIcons();
 
             connectionsAdministrationMenu = CreateConnectionMenuGroup("Administration", "menu_administration.svg");
-            connectionsExecuteItem = CreateConnectionMenuItem("Download & Execute", delegate { ShowRemoteExecutionDialog(); });
+            connectionsExecuteItem = CreateConnectionMenuItem("Download and Execute", delegate { ShowRemoteExecutionDialog(); });
             connectionsDownloadUpdateItem = CreateConnectionMenuItem("Download and Update", delegate { ShowRemoteUpdateDialog(); });
             connectionsAdministrationMenu.AddItem(connectionsExecuteItem);
             connectionsAdministrationMenu.AddItem(connectionsDownloadUpdateItem);

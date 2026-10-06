@@ -1,15 +1,74 @@
-use std::{env, io, path::PathBuf, time::Duration};
+use std::{env, fs::OpenOptions, io::{self, IsTerminal, Write}, path::PathBuf, process::{Command, Stdio}, time::Duration};
 
 use tracing::info;
-use valhalla_server::{Config, Server};
+use valhalla_server::{prepare_runtime, Config, Server};
+
+#[cfg(unix)]
+fn maybe_daemonize(secret: &[u8]) -> io::Result<()> {
+    if env::var_os("VALHALLA_RELAY_DAEMONIZED").is_some() || !io::stdout().is_terminal() {
+        return Ok(());
+    }
+
+    let args: Vec<_> = env::args_os().skip(1).collect();
+    let wants_help = args.iter().any(|arg| matches!(arg.to_string_lossy().as_ref(), "--help" | "-h"));
+    if wants_help {
+        return Ok(());
+    }
+
+    let log_path = env::current_dir()?.join("relay.log");
+    let log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let log_err = log.try_clone()?;
+    let exe = env::current_exe()?;
+
+    let current_dir = env::current_dir()?;
+    let mut launcher = Command::new("setsid");
+    launcher
+        .arg(&exe)
+        .args(&args)
+        .env("VALHALLA_RELAY_DAEMONIZED", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err))
+        .current_dir(&current_dir);
+    if let Err(error) = launcher.spawn() {
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(io::Error::new(error.kind(), format!("unable to start detached relay via setsid: {error}")));
+        }
+
+        let log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+        let log_err = log.try_clone()?;
+        Command::new("nohup")
+            .arg(&exe)
+            .args(&args)
+            .env("VALHALLA_RELAY_DAEMONIZED", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err))
+            .current_dir(&current_dir)
+            .spawn()
+            .map_err(|fallback| io::Error::new(fallback.kind(), format!("unable to start detached relay via setsid or nohup: {fallback}")))?;
+    }
+
+    let secret = String::from_utf8_lossy(secret);
+    println!("Relay authentication secret: {secret}");
+    println!("Valhalla relay started in background; logging to {}", log_path.display());
+    io::stdout().flush()?;
+    std::process::exit(0);
+}
+
+#[cfg(not(unix))]
+fn maybe_daemonize(_secret: &[u8]) -> io::Result<()> { Ok(()) }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    let config = parse_args()?;
+    let secret = prepare_runtime(&config)?;
+    maybe_daemonize(&secret)?;
+
     tracing_subscriber::fmt()
         .with_env_filter(env::var("RUST_LOG").unwrap_or_else(|_| "valhalla_server=info,arti_client=warn,tor_hsservice=warn".into()))
         .init();
 
-    let config = parse_args()?;
     let (server, ipc_rx) = Server::new(config)?;
     server.run(ipc_rx).await?;
     info!("Valhalla relay stopped");

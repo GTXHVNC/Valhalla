@@ -63,7 +63,7 @@ impl Default for Config {
     fn default() -> Self {
         let data_dir = PathBuf::from("/var/lib/valhalla");
         Self {
-            onion_nickname: "Valhalla".into(),
+            onion_nickname: "valhalla".into(),
             state_dir: data_dir.join("arti-state"),
             cache_dir: data_dir.join("arti-cache"),
             local_listen: None,
@@ -138,6 +138,62 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     diff == 0
 }
 
+
+fn ensure_runtime_directories(config: &Config) -> io::Result<()> {
+    if let Some(parent) = config.local_socket.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(parent) = config.control_socket.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if config.enable_onion {
+        fs::create_dir_all(&config.state_dir)?;
+        fs::create_dir_all(&config.cache_dir)?;
+    }
+    if let Some(parent) = config.panel_secret_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+pub fn prepare_runtime(config: &Config) -> io::Result<Zeroizing<Vec<u8>>> {
+    validate_direct_listener_configuration(config)?;
+    ensure_runtime_directories(config)?;
+    ensure_panel_secret(&config.panel_secret_file)
+}
+
+fn ensure_panel_secret(path: &Path) -> io::Result<Zeroizing<Vec<u8>>> {
+    if !path.exists() {
+        let mut random = [0u8; 16];
+        getrandom::getrandom(&mut random)
+            .map_err(|error| io::Error::new(io::ErrorKind::Other, format!("unable to generate panel secret: {error}")))?;
+        let encoded: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        use std::io::Write;
+        match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(mut file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+                }
+                file.write_all(encoded.as_bytes())?;
+                file.write_all(b"\n")?;
+                file.sync_all()?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(io::Error::new(error.kind(), format!("unable to create panel secret {}: {error}", path.display()))),
+        }
+    }
+
+    let raw = fs::read(path)
+        .map_err(|error| io::Error::new(error.kind(), format!("unable to read panel secret {}: {error}", path.display())))?;
+    let cleaned = raw.iter().copied().filter(|byte| !matches!(byte, b'\r' | b'\n' | b'\t' | b' ')).collect::<Vec<u8>>();
+    if cleaned.len() != 32 || !cleaned.iter().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("panel secret {} must contain exactly 32 hexadecimal bytes", path.display())));
+    }
+    Ok(Zeroizing::new(cleaned))
+}
+
 #[derive(Debug)]
 struct RateLimiter {
     window_start: Instant,
@@ -184,12 +240,7 @@ impl Server {
         if config.panel_id.is_empty() || config.panel_id.len() > 64 || config.panel_id.bytes().any(|byte| !byte.is_ascii_graphic()) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "panel ID must be 1-64 ASCII graphic characters"));
         }
-        validate_direct_listener_configuration(&config)?;
-        let panel_secret = fs::read(&config.panel_secret_file).map_err(|e| io::Error::new(e.kind(), format!("unable to read panel secret {}: {e}", config.panel_secret_file.display())))?;
-        let panel_secret = panel_secret.iter().copied().filter(|b| !matches!(b, b'\r' | b'\n' | b'\t' | b' ')).collect::<Vec<u8>>();
-        if panel_secret.len() != 32 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "panel secret must contain exactly 32 bytes"));
-        }
+        let panel_secret = prepare_runtime(&config)?;
         let agent_token = derive_agent_token(&panel_secret)?;
         let (ipc_tx, ipc_rx) = mpsc::channel(config.max_ipc_queue);
         let panel_hub = PanelHub::new(config.max_ipc_queue);
@@ -1198,6 +1249,27 @@ mod tests {
         let address: IpAddr = "2001:db8::10".parse().unwrap();
         let listen: SocketAddr = "[::]:4794".parse().unwrap();
         assert_eq!(materialize_direct_command(address, listen).as_ref(), "CMD:DIRECT_CONNECT:[2001:db8::10]:4794");
+    }
+
+    #[test]
+    fn default_relay_identity_uses_lowercase_valhalla_nickname() {
+        assert_eq!(Config::default().onion_nickname, "valhalla");
+    }
+
+    #[test]
+    fn prepare_runtime_creates_missing_secret() {
+        let root = std::env::temp_dir().join(format!("valhalla-relay-runtime-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut config = Config::default();
+        config.enable_onion = false;
+        config.local_socket = root.join("run/telemetry.sock");
+        config.control_socket = root.join("run/control.sock");
+        config.panel_secret_file = root.join("etc/panel/secret");
+        let secret = prepare_runtime(&config).expect("runtime preparation should succeed");
+        assert_eq!(secret.len(), 32);
+        assert!(secret.iter().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(config.panel_secret_file.is_file());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -2,38 +2,67 @@
 set -euo pipefail
 umask 077
 
-OUT_DIR="${1:-/etc/valhalla/panel}"
+OUT_DIR="${1:-/var/lib/valhalla/panel}"
 SERVER_NAME="${2:-valhalla-relay}"
 mkdir -p "$OUT_DIR"
 
-openssl req -x509 -newkey rsa:4096 -nodes -days 825 \
+CA_KEY="$OUT_DIR/ca.key"
+CA_CERT="$OUT_DIR/ca.crt"
+SERVER_KEY="$OUT_DIR/server.key"
+SERVER_CERT="$OUT_DIR/server.crt"
+SECRET="$OUT_DIR/secret"
+
+present=0
+for f in "$CA_KEY" "$CA_CERT" "$SERVER_KEY" "$SERVER_CERT" "$SECRET"; do
+  [[ -f "$f" ]] && present=$((present + 1))
+done
+if (( present == 5 )); then
+  printf 'Valhalla panel credentials already exist in %s\n' "$OUT_DIR"
+  exit 0
+fi
+if (( present != 0 )); then
+  echo "Refusing to overwrite an incomplete Valhalla panel credential set in $OUT_DIR" >&2
+  exit 1
+fi
+
+TMP_DIR="$OUT_DIR/.valhalla-panel-credentials.$$"
+cleanup() { rm -rf "$TMP_DIR"; }
+trap cleanup EXIT
+mkdir "$TMP_DIR"
+
+openssl req -x509 -newkey rsa:4096 -nodes -days 825 -sha256 \
   -subj "/CN=Valhalla Panel CA" \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
-  -keyout "$OUT_DIR/ca.key" -out "$OUT_DIR/ca.crt"
+  -keyout "$TMP_DIR/ca.key" -out "$TMP_DIR/ca.crt"
 
-openssl req -newkey rsa:3072 -nodes \
+openssl req -new -newkey rsa:3072 -nodes -sha256 \
   -subj "/CN=$SERVER_NAME" \
-  -keyout "$OUT_DIR/server.key" -out "$OUT_DIR/server.csr"
+  -keyout "$TMP_DIR/server.key" -out "$TMP_DIR/server.csr"
 
-cat > "$OUT_DIR/server.ext" <<EXT
+cat > "$TMP_DIR/server.ext" <<EXT
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:$SERVER_NAME
+subjectAltName=DNS:localhost,DNS:$SERVER_NAME
 EXT
 
 openssl x509 -req -days 825 -sha256 \
-  -CA "$OUT_DIR/ca.crt" -CAkey "$OUT_DIR/ca.key" -CAcreateserial \
-  -in "$OUT_DIR/server.csr" -out "$OUT_DIR/server.crt" -extfile "$OUT_DIR/server.ext"
+  -CA "$TMP_DIR/ca.crt" -CAkey "$TMP_DIR/ca.key" -CAcreateserial \
+  -in "$TMP_DIR/server.csr" -out "$TMP_DIR/server.crt" -extfile "$TMP_DIR/server.ext"
 
-python3 - "$OUT_DIR/secret" <<'PY'
+openssl verify -CAfile "$TMP_DIR/ca.crt" "$TMP_DIR/server.crt"
+
+mv "$TMP_DIR/ca.key" "$CA_KEY"
+mv "$TMP_DIR/ca.crt" "$CA_CERT"
+mv "$TMP_DIR/server.key" "$SERVER_KEY"
+mv "$TMP_DIR/server.crt" "$SERVER_CERT"
+python3 - "$SECRET" <<'PY'
 import secrets
 import sys
-path = sys.argv[1]
-with open(path, "x", encoding="ascii") as f:
-    f.write(secrets.token_urlsafe(24)[:32] + "\n")
+with open(sys.argv[1], "x", encoding="ascii") as f:
+    f.write(secrets.token_hex(16) + "\n")
 PY
-chmod 600 "$OUT_DIR/secret" "$OUT_DIR/server.key" "$OUT_DIR/ca.key"
-rm -f "$OUT_DIR/server.csr" "$OUT_DIR/server.ext" "$OUT_DIR/ca.srl"
-printf 'Created TLS CA/server credentials and a 32-character panel secret in %s\n' "$OUT_DIR"
+chmod 600 "$CA_KEY" "$SERVER_KEY" "$SECRET"
+chmod 644 "$CA_CERT" "$SERVER_CERT"
+printf 'Created Valhalla panel CA/server credentials and panel secret in %s\n' "$OUT_DIR"

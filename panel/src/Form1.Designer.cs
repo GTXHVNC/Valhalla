@@ -2370,7 +2370,7 @@ namespace Valhalla
             this.xtraTabPage5.Controls.Add(this.panelControl18);
             this.xtraTabPage5.Name = "xtraTabPage5";
             this.xtraTabPage5.Size = new System.Drawing.Size(1255, 873);
-            this.xtraTabPage5.Text = "Einherjar";
+            this.xtraTabPage5.Text = "Build";
             // 
             // panelControl21
             // 
@@ -2543,7 +2543,7 @@ namespace Valhalla
             this.simpleButton6.ShowFocusRectangle = DevExpress.Utils.DefaultBoolean.False;
             this.simpleButton6.Size = new System.Drawing.Size(1201, 30);
             this.simpleButton6.TabIndex = 124;
-            this.simpleButton6.Text = "BUILD EINHERJAR";
+            this.simpleButton6.Text = "BUILD";
             this.simpleButton6.Click += new System.EventHandler(this.simpleButton6_Click);
             // 
             // pictureEdit13
@@ -2576,7 +2576,7 @@ namespace Valhalla
             this.label52.Name = "label52";
             this.label52.Size = new System.Drawing.Size(135, 16);
             this.label52.TabIndex = 122;
-            this.label52.Text = "Build Einherjar";
+            this.label52.Text = "Build";
             // 
             // pictureEdit12
             // 
@@ -2914,7 +2914,7 @@ namespace Valhalla
             this.accordionControlElement5.Expanded = true;
             this.accordionControlElement5.ImageOptions.SvgImage = ((DevExpress.Utils.Svg.SvgImage)(resources.GetObject("accordionControlElement5.ImageOptions.SvgImage")));
             this.accordionControlElement5.Name = "accordionControlElement5";
-            this.accordionControlElement5.Text = "Einherjar";
+            this.accordionControlElement5.Text = "Build";
             // 
             // accordionControlElement6
             // 
@@ -2922,7 +2922,7 @@ namespace Valhalla
             this.accordionControlElement6.ImageOptions.SvgImageSize = new System.Drawing.Size(16, 16);
             this.accordionControlElement6.Name = "accordionControlElement6";
             this.accordionControlElement6.Style = DevExpress.XtraBars.Navigation.ElementStyle.Item;
-            this.accordionControlElement6.Text = "Einherjar";
+            this.accordionControlElement6.Text = "Build";
             this.accordionControlElement6.Click += new System.EventHandler(this.accordionControlElement6_Click);
             // 
             // accordionControlElement7

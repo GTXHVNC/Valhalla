@@ -78,8 +78,6 @@ namespace Valhalla
             RelaySettingsStore.ValidateCaCertificate(caCertificate);
             panelId = panelIdValue;
             stopping = false;
-            bool requireCertificateNameMatch = !IPAddress.TryParse(host, out _);
-
             TcpClient tcp = new TcpClient();
             try
             {
@@ -89,7 +87,7 @@ namespace Valhalla
                 tcp.EndConnect(connect);
                 tcp.NoDelay = true;
                 ssl = new SslStream(tcp.GetStream(), false,
-                    (sender, certificate, chain, errors) => ValidateServerCertificate(certificate, errors, requireCertificateNameMatch));
+                    (sender, certificate, chain, errors) => ValidateServerCertificate(certificate, errors));
                 ssl.AuthenticateAsClient(host, null, SslProtocols.Tls12, false);
 
                 client = tcp;
@@ -408,11 +406,13 @@ namespace Valhalla
             };
         }
 
-        private bool ValidateServerCertificate(X509Certificate certificate, SslPolicyErrors errors, bool requireCertificateNameMatch)
+        private bool ValidateServerCertificate(X509Certificate certificate, SslPolicyErrors errors)
         {
             if (certificate == null || caCertificate == null) return false;
             if ((errors & SslPolicyErrors.RemoteCertificateNotAvailable) != 0) return false;
-            if (requireCertificateNameMatch && (errors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0) return false;
+            // The relay CA is explicitly selected and pinned by the panel. Hostname matching is
+            // intentionally not a second trust requirement because operators commonly connect
+            // to the same relay by a VPS IP address or DNS alias.
 
             using (X509Chain chain = new X509Chain())
             using (X509Certificate2 server = new X509Certificate2(certificate))

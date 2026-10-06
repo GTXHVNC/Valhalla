@@ -3645,8 +3645,8 @@ namespace Valhalla
             // area is shorter than the designer's 932 px form.  Build the page around
             // one deterministic table: header, responsive configuration card, a fixed
             // terminal header, and a terminal that fills the remaining space.
-            label52.Text = "Build Einherjar";
-            accordionControlElement6.Text = "Einherjar";
+            label52.Text = "Build";
+            accordionControlElement6.Text = "Build";
 
             accordionControlElement7.Visible = false;
             xtraTabPage6.PageVisible = false;
@@ -5534,7 +5534,7 @@ namespace Valhalla
             accordionControl1.ForeColor = Color.White;
 
             accordionControlElement1.Text = "Dashboard";
-            accordionControlElement5.Text = "Einherjar";
+            accordionControlElement5.Text = "Build";
             accordionControlElement9.Text = "System";
             ConfigureSidebarGroupAppearance(accordionControlElement1);
             ConfigureSidebarGroupAppearance(accordionControlElement5);

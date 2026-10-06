@@ -1,4 +1,4 @@
-use std::{fmt::Debug, fs, io, net::{IpAddr, SocketAddr}, path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{fs, io, net::{IpAddr, SocketAddr}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -8,7 +8,6 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use futures_util::{SinkExt, StreamExt};
 use sha2::{Digest as Sha2Digest, Sha256};
-use sha3::{Digest as Sha3Digest, Sha3_256};
 use hmac::{Hmac, Mac};
 use zeroize::Zeroizing;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UnixListener}, sync::{mpsc, OwnedSemaphorePermit, Semaphore, watch}, time::{interval, timeout}};
@@ -72,9 +71,11 @@ impl Default for Config {
             local_socket: PathBuf::from(DEFAULT_LOCAL_SOCKET),
             control_socket: PathBuf::from(DEFAULT_CONTROL_SOCKET),
             panel_listen: None,
-            panel_cert: PathBuf::from("/etc/valhalla/panel/server.crt"),
-            panel_key: PathBuf::from("/etc/valhalla/panel/server.key"),
-            panel_secret_file: PathBuf::from("/etc/valhalla/panel/secret"),
+            panel_cert: PathBuf::from("/var/lib/valhalla/panel/server.crt"),
+            panel_key: PathBuf::from("/var/lib/valhalla/panel/server.key"),
+            panel_ca_cert: PathBuf::from("/var/lib/valhalla/panel/ca.crt"),
+            panel_ca_key: PathBuf::from("/var/lib/valhalla/panel/ca.key"),
+            panel_secret_file: PathBuf::from("/var/lib/valhalla/panel/secret"),
             panel_id: "panel-01".into(),
             panel_max_connections: 64,
             max_agent_command_queue: 16,
@@ -150,8 +151,10 @@ fn ensure_runtime_directories(config: &Config) -> io::Result<()> {
         fs::create_dir_all(&config.state_dir)?;
         fs::create_dir_all(&config.cache_dir)?;
     }
-    if let Some(parent) = config.panel_secret_file.parent() {
-        fs::create_dir_all(parent)?;
+    for path in [&config.panel_cert, &config.panel_key, &config.panel_ca_cert, &config.panel_ca_key, &config.panel_secret_file] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
     }
     Ok(())
 }
@@ -159,7 +162,148 @@ fn ensure_runtime_directories(config: &Config) -> io::Result<()> {
 pub fn prepare_runtime(config: &Config) -> io::Result<Zeroizing<Vec<u8>>> {
     validate_direct_listener_configuration(config)?;
     ensure_runtime_directories(config)?;
+    if config.panel_listen.is_some() {
+        ensure_panel_tls_credentials(config)?;
+    }
     ensure_panel_secret(&config.panel_secret_file)
+}
+
+fn ensure_panel_tls_credentials(config: &Config) -> io::Result<()> {
+    let paths = [&config.panel_ca_cert, &config.panel_ca_key, &config.panel_cert, &config.panel_key];
+    let present = paths.iter().filter(|path| path.is_file()).count();
+    if present == paths.len() {
+        return Ok(());
+    }
+    if present != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "panel TLS credential set is incomplete; refusing to overwrite existing credentials",
+        ));
+    }
+
+    let parent = config.panel_ca_cert.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "panel CA certificate path has no parent directory")
+    })?;
+    fs::create_dir_all(parent)?;
+
+    let temp_dir = parent.join(format!(".valhalla-panel-certgen-{}", std::process::id()));
+    if temp_dir.exists() {
+        fs::remove_dir_all(&temp_dir).map_err(|error| {
+            io::Error::new(error.kind(), format!("remove stale panel certificate temp directory {}: {error}", temp_dir.display()))
+        })?;
+    }
+    fs::create_dir(&temp_dir)?;
+
+    let result = (|| -> io::Result<()> {
+        let ca_key = temp_dir.join("ca.key");
+        let ca_cert = temp_dir.join("ca.crt");
+        let server_key = temp_dir.join("server.key");
+        let server_csr = temp_dir.join("server.csr");
+        let server_cert = temp_dir.join("server.crt");
+        let server_ext = temp_dir.join("server.ext");
+
+        run_openssl(&[
+            "req", "-x509", "-newkey", "rsa:4096", "-nodes", "-days", "825", "-sha256",
+            "-subj", "/CN=Valhalla Panel CA",
+            "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+            "-keyout", ca_key.to_string_lossy().as_ref(),
+            "-out", ca_cert.to_string_lossy().as_ref(),
+        ])?;
+
+        run_openssl(&[
+            "req", "-new", "-newkey", "rsa:3072", "-nodes", "-sha256",
+            "-subj", "/CN=Valhalla Relay Panel Gateway",
+            "-keyout", server_key.to_string_lossy().as_ref(),
+            "-out", server_csr.to_string_lossy().as_ref(),
+        ])?;
+
+        fs::write(&server_ext, concat!(
+            "basicConstraints=critical,CA:FALSE\n",
+            "keyUsage=critical,digitalSignature,keyEncipherment\n",
+            "extendedKeyUsage=serverAuth\n",
+            "subjectAltName=DNS:localhost\n",
+        ))?;
+
+        run_openssl(&[
+            "x509", "-req", "-days", "825", "-sha256",
+            "-CA", ca_cert.to_string_lossy().as_ref(),
+            "-CAkey", ca_key.to_string_lossy().as_ref(),
+            "-CAcreateserial",
+            "-in", server_csr.to_string_lossy().as_ref(),
+            "-out", server_cert.to_string_lossy().as_ref(),
+            "-extfile", server_ext.to_string_lossy().as_ref(),
+        ])?;
+
+        run_openssl(&[
+            "verify", "-CAfile", ca_cert.to_string_lossy().as_ref(), server_cert.to_string_lossy().as_ref(),
+        ])?;
+
+        let destinations = [
+            (&ca_cert, &config.panel_ca_cert),
+            (&ca_key, &config.panel_ca_key),
+            (&server_cert, &config.panel_cert),
+            (&server_key, &config.panel_key),
+        ];
+        let mut installed = Vec::<PathBuf>::new();
+        for (source, destination) in destinations {
+            if destination.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("panel credential appeared during generation: {}", destination.display()),
+                ));
+            }
+            if let Err(error) = fs::rename(source, destination) {
+                for path in &installed {
+                    let _ = fs::remove_file(path);
+                }
+                return Err(error);
+            }
+            installed.push((*destination).clone());
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config.panel_ca_key, fs::Permissions::from_mode(0o600))?;
+            fs::set_permissions(&config.panel_key, fs::Permissions::from_mode(0o600))?;
+            fs::set_permissions(&config.panel_ca_cert, fs::Permissions::from_mode(0o644))?;
+            fs::set_permissions(&config.panel_cert, fs::Permissions::from_mode(0o644))?;
+        }
+
+        Ok(())
+    })();
+
+    let cleanup = fs::remove_dir_all(&temp_dir);
+    match result {
+        Ok(()) => {
+            cleanup.map_err(|error| io::Error::new(error.kind(), format!("cleanup panel certificate temp directory: {error}")))?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = cleanup;
+            // Do not delete a credential that another process may have created while
+            // this generation was in progress. Any successfully installed files are
+            // cleaned only by the rename loop itself before reporting its error.
+            Err(error)
+        }
+    }
+}
+
+fn run_openssl(args: &[&str]) -> io::Result<()> {
+    let output = Command::new("openssl")
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| io::Error::new(error.kind(), format!("unable to execute openssl: {error}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        format!("openssl {} failed: {}", args.first().copied().unwrap_or("command"), if stderr.is_empty() { output.status.to_string() } else { stderr }),
+    ))
 }
 
 fn ensure_panel_secret(path: &Path) -> io::Result<Zeroizing<Vec<u8>>> {
@@ -188,8 +332,8 @@ fn ensure_panel_secret(path: &Path) -> io::Result<Zeroizing<Vec<u8>>> {
     let raw = fs::read(path)
         .map_err(|error| io::Error::new(error.kind(), format!("unable to read panel secret {}: {error}", path.display())))?;
     let cleaned = raw.iter().copied().filter(|byte| !matches!(byte, b'\r' | b'\n' | b'\t' | b' ')).collect::<Vec<u8>>();
-    if cleaned.len() != 32 || !cleaned.iter().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("panel secret {} must contain exactly 32 hexadecimal bytes", path.display())));
+    if cleaned.len() != 32 || !cleaned.iter().all(|byte| (0x21..=0x7e).contains(byte)) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("panel secret {} must contain exactly 32 printable ASCII characters", path.display())));
     }
     Ok(Zeroizing::new(cleaned))
 }
@@ -1027,6 +1171,19 @@ fn hex32(value: &str) -> Option<[u8; 32]> {
 fn protocol_err(error: valhalla_protocol::ProtocolError) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, error.to_string()) }
 fn ws_err(error: tokio_tungstenite::tungstenite::Error) -> io::Error { io::Error::new(io::ErrorKind::Other, error.to_string()) }
 
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn is_onion_base32(byte: u8) -> bool {
+    matches!(byte, b'a'..=b'z' | b'2'..=b'7')
+}
+
 fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
     tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .read_buffer_size(8 * 1024)
@@ -1037,7 +1194,7 @@ fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
 }
 
 
-fn format_onion_endpoint<T: Debug>(address: &T, port: u16, path: &str) -> Result<String, String> {
+fn format_onion_endpoint(address: &tor_hsservice::HsId, port: u16, path: &str) -> Result<String, String> {
     if port == 0 {
         return Err("onion endpoint port must not be zero".into());
     }
@@ -1049,127 +1206,14 @@ fn format_onion_endpoint<T: Debug>(address: &T, port: u16, path: &str) -> Result
         return Err("onion WebSocket path must start with '/'".into());
     };
 
-    let debug = format!("{address:?}");
-    let host = extract_onion_host(&debug).ok_or_else(|| {
-        "unable to derive a 56-character v3 onion hostname from Arti HsId".to_owned()
-    })?;
+    let host = address.to_string();
+    let host = host.strip_suffix(".onion").unwrap_or(&host);
+    if host.len() != 56 || !host.bytes().all(is_onion_base32) {
+        return Err("Arti returned an invalid v3 onion hostname".to_owned());
+    }
     Ok(format!("ws://{host}.onion:{port}{path}"))
 }
 
-fn extract_onion_host(debug: &str) -> Option<String> {
-    // Prefer a directly rendered 56-character v3 label when the dependency's
-    // Debug implementation exposes one.
-    let bytes = debug.as_bytes();
-    for start in 0..bytes.len() {
-        if !is_onion_base32(bytes[start]) {
-            continue;
-        }
-        let end = (start + 56).min(bytes.len());
-        if end - start == 56 && bytes[start..end].iter().all(|b| is_onion_base32(*b)) {
-            return Some(debug[start..end].to_ascii_lowercase());
-        }
-    }
-
-    // Some opaque ID Debug implementations print the underlying 32 bytes.
-    // Parse a bracketed decimal byte list and encode it using Tor's lower-case
-    // RFC 4648 base32 form (without padding).
-    let Some(open) = debug.find('[') else { return None; };
-    let close = debug[open + 1..].find(']')? + open + 1;
-    let mut values = Vec::new();
-    let mut decimal_form = true;
-    for token in debug[open + 1..close].split(',') {
-        let token = token.trim();
-        if token.is_empty() { continue; }
-        match token.parse::<u8>() {
-            Ok(value) => values.push(value),
-            Err(_) => {
-                decimal_form = false;
-                break;
-            }
-        }
-    }
-    if decimal_form && values.len() == 32 {
-        return Some(onion_v3_hostname(&values));
-    }
-
-    // Also tolerate an opaque Debug representation that exposes the key as
-    // a 64-character hexadecimal string.
-    let mut hex = None;
-    let mut run_start = 0usize;
-    let debug_bytes = debug.as_bytes();
-    while run_start < debug_bytes.len() {
-        let Some(rel) = debug[run_start..].find(|c: char| c.is_ascii_hexdigit()) else { break; };
-        let start = run_start + rel;
-        let end = (start + 64).min(debug_bytes.len());
-        if end - start == 64 && debug_bytes[start..end].iter().all(|b| b.is_ascii_hexdigit()) {
-            hex = Some(&debug_bytes[start..end]);
-            break;
-        }
-        run_start = start + 1;
-    }
-    let hex = hex?;
-    let mut raw = Vec::with_capacity(32);
-    for pair in hex.chunks_exact(2) {
-        raw.push((hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?);
-    }
-    Some(onion_v3_hostname(&raw))
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn is_onion_base32(byte: u8) -> bool {
-    byte.is_ascii_lowercase() && matches!(byte, b'a'..=b'z')
-        || matches!(byte, b'2'..=b'7')
-}
-
-fn onion_v3_hostname(public_key: &[u8]) -> String {
-    debug_assert_eq!(public_key.len(), 32);
-
-    // Tor v3 onion hostnames encode: 32-byte Ed25519 public key,
-    // 2-byte SHA3-256 checksum, then version byte 0x03.
-    let mut checksum = Sha3_256::new();
-    checksum.update(b".onion checksum");
-    checksum.update(public_key);
-    checksum.update([3]);
-    let checksum = checksum.finalize();
-
-    let mut encoded = [0u8; 35];
-    encoded[..32].copy_from_slice(public_key);
-    encoded[32..34].copy_from_slice(&checksum[..2]);
-    encoded[34] = 3;
-    base32_lower_no_pad(&encoded)
-}
-
-fn base32_lower_no_pad(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
-    let mut output = String::with_capacity((bytes.len() * 8 + 4) / 5);
-    let mut buffer = 0u32;
-    let mut bits = 0u8;
-    for &byte in bytes {
-        buffer = (buffer << 8) | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            output.push(ALPHABET[((buffer >> bits) & 0x1f) as usize] as char);
-        }
-        if bits == 0 {
-            buffer = 0;
-        } else {
-            buffer &= (1u32 << bits) - 1;
-        }
-    }
-    if bits > 0 {
-        output.push(ALPHABET[((buffer << (5 - bits)) & 0x1f) as usize] as char);
-    }
-    output
-}
 
 
 #[cfg(test)]
@@ -1177,25 +1221,22 @@ mod onion_endpoint_tests {
     use super::*;
 
     #[test]
-    fn base32_encodes_32_bytes_to_56_chars() {
-        let encoded = onion_v3_hostname(&[0u8; 32]);
-        assert_eq!(encoded.len(), 56);
-        assert!(encoded.bytes().all(|byte| is_onion_base32(byte)));
-    }
-
-    #[test]
-    fn extracts_direct_debug_host() {
+    fn formats_hsid_using_arti_display_hostname() {
         let host = "a".repeat(56);
-        let debug = format!("HsId(\\\"{host}\\\")");
-        assert_eq!(extract_onion_host(&debug), Some(host));
+        let address: tor_hsservice::HsId = format!("{host}.onion").parse().unwrap();
+        assert_eq!(
+            format_onion_endpoint(&address, 443, "/valhalla").unwrap(),
+            format!("ws://{host}.onion:443/valhalla")
+        );
     }
 
     #[test]
-    fn extracts_decimal_byte_debug_form() {
-        let debug = "HsId([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])";
-        assert_eq!(extract_onion_host(debug).unwrap().len(), 56);
+    fn rejects_invalid_onion_path() {
+        let address: tor_hsservice::HsId = format!("{}.onion", "b".repeat(56)).parse().unwrap();
+        assert!(format_onion_endpoint(&address, 443, "valhalla").is_err());
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -1257,18 +1298,31 @@ mod tests {
     }
 
     #[test]
-    fn prepare_runtime_creates_missing_secret() {
+    fn prepare_runtime_creates_missing_secret_and_panel_credentials() {
         let root = std::env::temp_dir().join(format!("valhalla-relay-runtime-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let mut config = Config::default();
         config.enable_onion = false;
         config.local_socket = root.join("run/telemetry.sock");
         config.control_socket = root.join("run/control.sock");
-        config.panel_secret_file = root.join("etc/panel/secret");
+        config.panel_listen = Some("127.0.0.1:24443".into());
+        config.panel_ca_cert = root.join("panel/ca.crt");
+        config.panel_ca_key = root.join("panel/ca.key");
+        config.panel_cert = root.join("panel/server.crt");
+        config.panel_key = root.join("panel/server.key");
+        config.panel_secret_file = root.join("panel/secret");
         let secret = prepare_runtime(&config).expect("runtime preparation should succeed");
         assert_eq!(secret.len(), 32);
         assert!(secret.iter().all(|byte| byte.is_ascii_hexdigit()));
         assert!(config.panel_secret_file.is_file());
+        assert!(config.panel_ca_cert.is_file());
+        assert!(config.panel_ca_key.is_file());
+        assert!(config.panel_cert.is_file());
+        assert!(config.panel_key.is_file());
+
+        fs::write(&config.panel_secret_file, b"0123456789abcdef!@#$%^&*()ABCDEF\n").unwrap();
+        assert!(ensure_panel_secret(&config.panel_secret_file).is_ok());
+
         let _ = fs::remove_dir_all(&root);
     }
 

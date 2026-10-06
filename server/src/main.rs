@@ -69,6 +69,14 @@ async fn main() -> io::Result<()> {
         .with_env_filter(env::var("RUST_LOG").unwrap_or_else(|_| "valhalla_server=info,arti_client=warn,tor_hsservice=warn".into()))
         .init();
 
+    if config.panel_listen.is_some() {
+        info!(
+            ca = %config.panel_ca_cert.display(),
+            certificate = %config.panel_cert.display(),
+            "panel TLS credentials ready"
+        );
+    }
+
     let (server, ipc_rx) = Server::new(config)?;
     server.run(ipc_rx).await?;
     info!("Valhalla relay stopped");
@@ -96,6 +104,8 @@ fn parse_args() -> io::Result<Config> {
             "--panel-listen" => config.panel_listen = Some(next(&mut args, "panel-listen")?),
             "--panel-cert" => config.panel_cert = PathBuf::from(next(&mut args, "panel-cert")?),
             "--panel-key" => config.panel_key = PathBuf::from(next(&mut args, "panel-key")?),
+            "--panel-ca-cert" => config.panel_ca_cert = PathBuf::from(next(&mut args, "panel-ca-cert")?),
+            "--panel-ca-key" => config.panel_ca_key = PathBuf::from(next(&mut args, "panel-ca-key")?),
             "--panel-secret-file" => config.panel_secret_file = PathBuf::from(next(&mut args, "panel-secret-file")?),
             "--panel-id" => config.panel_id = next(&mut args, "panel-id")?,
             "--panel-max-connections" => config.panel_max_connections = parse_usize(&next(&mut args, "panel-max-connections")?)?,
@@ -111,7 +121,7 @@ fn parse_args() -> io::Result<Config> {
             "--ping-interval" => config.ping_interval = parse_seconds(&next(&mut args, "ping-interval")?)?,
             "--metrics-interval" => config.metrics_interval = parse_seconds(&next(&mut args, "metrics-interval")?)?,
             "--help" | "-h" => {
-                println!("valhalla-relay options: --nickname N --state-dir DIR --cache-dir DIR --local-listen ADDR --no-onion --local-socket PATH --control-socket PATH --panel-listen ADDR --panel-cert FILE --panel-key FILE --panel-secret-file FILE --panel-id ID --panel-max-connections N --path PATH --onion-port PORT --max-connections N --max-auth-inflight N --ipc-queue N --message-rate N --max-agent-command-queue N --max-broadcast-targets N --max-control-requests-per-second N --handshake-timeout S --auth-timeout S --idle-timeout S --ping-interval S --metrics-interval S");
+                println!("valhalla-relay options: --nickname N --state-dir DIR --cache-dir DIR --local-listen ADDR --no-onion --local-socket PATH --control-socket PATH --panel-listen ADDR --panel-cert FILE --panel-key FILE --panel-ca-cert FILE --panel-ca-key FILE --panel-secret-file FILE --panel-id ID --panel-max-connections N --path PATH --onion-port PORT --max-connections N --max-auth-inflight N --ipc-queue N --message-rate N --max-agent-command-queue N --max-broadcast-targets N --max-control-requests-per-second N --handshake-timeout S --auth-timeout S --idle-timeout S --ping-interval S --metrics-interval S");
                 std::process::exit(0);
             }
             other => return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("unknown option {other}"))),

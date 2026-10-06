@@ -2375,7 +2375,7 @@ namespace Valhalla
             // panelControl21
             // 
             this.panelControl21.Controls.Add(this.richTextBox2);
-            this.panelControl21.Dock = System.Windows.Forms.DockStyle.Top;
+            this.panelControl21.Dock = System.Windows.Forms.DockStyle.Fill;
             this.panelControl21.Location = new System.Drawing.Point(0, 362);
             this.panelControl21.Name = "panelControl21";
             this.panelControl21.Size = new System.Drawing.Size(1255, 597);

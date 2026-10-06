@@ -17,8 +17,9 @@ namespace Valhalla
                 ConfigureGlobalErrorLogging();
                 ValhallaStorage.EnsureDirectories();
 
-                // DevExpress v24.2 is desktop-oriented; explicitly select the
-                // non-auto-hiding scrollbar mode before any controls are created.
+                // Keep WinForms and DevExpress on the same Per-Monitor-V2 DPI policy.
+                // This must be established before any DevExpress control/skin is created.
+                WindowsFormsSettings.SetPerMonitorDpiAware();
                 WindowsFormsSettings.ScrollUIMode = ScrollUIMode.Desktop;
 
                 Application.EnableVisualStyles();

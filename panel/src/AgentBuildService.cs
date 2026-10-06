@@ -58,7 +58,7 @@ namespace Valhalla
             int offset = FindMagic(image);
             if (offset < 0)
                 throw new InvalidDataException(
-                    "stub.bin does not contain the Valhalla configuration sentinel. " +
+                    "stub.bin does not contain the Einherjar configuration sentinel. " +
                     "Ensure stub.bin was produced by the Einherjar build.");
 
             // Validate that the block fits in the space allocated after the sentinel.
@@ -171,7 +171,7 @@ namespace Valhalla
 
             // 2. Walk up from the panel executable directory looking for stub\stub.bin.
             //    Depth 0 catches the CI layout where stub.bin is embedded directly
-            //    alongside Valhalla.exe at <output>\stub\stub.bin.
+            //    alongside the panel executable at <output>\stub\stub.bin.
             //    Deeper depths catch the source-tree layout <repo-root>\stub\stub.bin.
             DirectoryInfo current = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
             for (int depth = 0; current != null && depth < 8; depth++, current = current.Parent)
@@ -182,7 +182,7 @@ namespace Valhalla
 
             throw new FileNotFoundException(
                 "stub/stub.bin was not found. Place the pre-compiled Einherjar binary at " +
-                "stub\\stub.bin alongside Valhalla.exe, or set VALHALLA_STUB_PATH.");
+                "stub\\stub.bin alongside the panel executable, or set VALHALLA_STUB_PATH.");
         }
     }
 }

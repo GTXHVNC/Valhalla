@@ -622,7 +622,7 @@ impl Server {
         }
         self.metrics.auth_success.fetch_add(1, Ordering::Relaxed);
         ws.send(tokio_tungstenite::tungstenite::Message::Text("AUTH:OK".into())).await.map_err(ws_err)?;
-        info!(fingerprint_prefix = %&fingerprint[..fingerprint.len().min(12)], "agent authenticated");
+        info!(agent = valhalla_protocol::AGENT_NAME, fingerprint_prefix = %&fingerprint[..fingerprint.len().min(12)], "agent authenticated");
         Ok(fingerprint)
     }
 

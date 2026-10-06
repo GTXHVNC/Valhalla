@@ -7,7 +7,7 @@ fn command_contract() {
         assert!(source.contains(command));
     }
     for token in [
-        "UPDATE_BEGIN:", "UPDATE_CHUNK:", "UPDATE_END:", "HELLO:FINGERPRINT:", "DATA:",
+        "UPDATE_BEGIN:", "UPDATE_CHUNK:", "UPDATE_END:", "HELLO:EINHERJAR:FINGERPRINT:", "DATA:",
         "PLUGIN:", "PLUGIN_EVENT:", "PLUGIN_OUT:", "DIRECT_CONNECT:", "DIRECT_DISCONNECT", "PLUGIN_RESUME:",
     ] {
         assert!(source.contains(token), "missing protocol token: {token}");

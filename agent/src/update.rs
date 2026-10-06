@@ -7,6 +7,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use sha2::{Digest, Sha256};
 
 use crate::{auth, telemetry, transport};
@@ -1237,7 +1240,7 @@ pub(crate) fn spawn_successor(
     let mut command = Command::new(&helper);
     command
         .env(SUCCESSOR_ENV, "1")
-        .env(SOURCE_ENV, staged)
+        .env(SOURCE_ENV, &staged)
         .env(TARGET_ENV, target)
         .env(HASH_ENV, &hash)
         .env(PARENT_ENV, parent_pid.to_string())

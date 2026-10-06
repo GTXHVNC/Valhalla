@@ -3645,8 +3645,8 @@ namespace Valhalla
             // area is shorter than the designer's 932 px form.  Build the page around
             // one deterministic table: header, responsive configuration card, a fixed
             // terminal header, and a terminal that fills the remaining space.
-            label52.Text = "Build Agent";
-            accordionControlElement6.Text = "Build";
+            label52.Text = "Build Einherjar";
+            accordionControlElement6.Text = "Einherjar";
 
             accordionControlElement7.Visible = false;
             xtraTabPage6.PageVisible = false;
@@ -3911,7 +3911,7 @@ namespace Valhalla
                 AutoSize = false,
                 Dock = DockStyle.Fill,
                 Margin = Padding.Empty,
-                Text = "Folder Name",
+                Text = "Einherjar Folder",
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(160, 160, 160),
@@ -5534,7 +5534,7 @@ namespace Valhalla
             accordionControl1.ForeColor = Color.White;
 
             accordionControlElement1.Text = "Dashboard";
-            accordionControlElement5.Text = "Builder";
+            accordionControlElement5.Text = "Einherjar";
             accordionControlElement9.Text = "System";
             ConfigureSidebarGroupAppearance(accordionControlElement1);
             ConfigureSidebarGroupAppearance(accordionControlElement5);

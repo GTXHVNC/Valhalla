@@ -5,7 +5,7 @@ pub const PORT: u16 = 4793;
 pub const RETRY: u64 = 5;
 pub const READ: u64 = 3;
 
-pub const HELLO: &str = "HELLO:FINGERPRINT:";
+pub const HELLO: &str = "HELLO:EINHERJAR:FINGERPRINT:";
 pub const DATA: &str = "DATA:";
 pub const HB: &str = "HB";
 pub const PONG: &str = "PONG";

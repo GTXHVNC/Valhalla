@@ -9,7 +9,7 @@ use tokio_tungstenite::{client_async_with_config, tungstenite::{http::Request, M
 use tor_rtcompat::PreferredRuntime;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::auth;
+use crate::{auth, text};
 
 #[derive(Debug, Clone)]
 pub enum Endpoint {
@@ -299,7 +299,7 @@ async fn authenticate(
     signing_key: &SigningKey,
     handshake_timeout: Duration,
 ) -> io::Result<()> {
-    let hello = format!("HELLO:FINGERPRINT:{}", identity.fingerprint);
+    let hello = format!("{}{}", text::HELLO, identity.fingerprint);
     timeout(handshake_timeout, session.send_text(&hello))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "authentication send timeout"))??;

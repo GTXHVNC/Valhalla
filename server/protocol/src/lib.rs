@@ -10,6 +10,8 @@ pub const MAX_TELEMETRY_FIELDS: usize = 16;
 pub const MAX_AGENT_ID_LEN: usize = 128;
 pub const MAX_TELEMETRY_FIELD_BYTES: usize = 64 * 1024;
 pub const MAX_AUTH_KEY_HEX_LEN: usize = 64;
+pub const AGENT_NAME: &str = "Einherjar";
+pub const AGENT_HELLO_PREFIX: &str = "HELLO:EINHERJAR:FINGERPRINT:";
 
 
 pub const MAX_CONTROL_FRAME_BYTES: usize = MAX_CONTROL_COMMAND_LEN + 64 * 1024;
@@ -220,7 +222,7 @@ pub fn parse_data_line(line: &str) -> Result<Telemetry, ProtocolError> {
 
 pub fn parse_fingerprint_line(line: &str) -> Result<&str, ProtocolError> {
     let fingerprint = line
-        .strip_prefix("HELLO:FINGERPRINT:")
+        .strip_prefix(AGENT_HELLO_PREFIX)
         .ok_or(ProtocolError::UnexpectedMessage)?;
     if fingerprint.len() != 64 || !fingerprint.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(ProtocolError::InvalidFingerprint);
@@ -350,5 +352,13 @@ mod tests {
     fn auth_message_binds_nonce_and_fingerprint() {
         assert_ne!(auth_message("a", &[1]), auth_message("a", &[2]));
         assert_ne!(auth_message("a", &[1]), auth_message("b", &[1]));
+    }
+
+    #[test]
+    fn parses_einherjar_hello() {
+        let fingerprint = "a".repeat(64);
+        assert_eq!(parse_fingerprint_line(&format!("{}{}", AGENT_HELLO_PREFIX, fingerprint)).unwrap(), fingerprint);
+        assert!(parse_fingerprint_line(&format!("HELLO:FINGERPRINT:{}", fingerprint)).is_err());
+        assert_eq!(AGENT_NAME, "Einherjar");
     }
 }

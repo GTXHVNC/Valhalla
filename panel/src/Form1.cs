@@ -3794,70 +3794,55 @@ namespace Valhalla
                 }
             };
 
-            // ── Lay everything out with explicit coordinates ─────────────────
-            // We use a single transparent host panel that fills panelControl19
-            // to the right of pictureEdit13, so we own the coordinate space.
-            var host = new System.Windows.Forms.Panel
-            {
-                BackColor = Color.Transparent,
-                Dock      = DockStyle.Fill,
-            };
+            // ── pictureEdit13 geometry ───────────────────────────────────────
+            // DevExpress PanelControl has a 2 px inner border, so its client
+            // origin is (2, 2).  pictureEdit13 is DockStyle.Left at width 50,
+            // occupying client x = 0..49.  All content must start at x = 52
+            // (50 px icon + 2 px gap) to avoid being hidden behind the icon.
+            // Using a DockStyle.Fill host panel does NOT work here — DevExpress
+            // PanelControl ignores the Left-docked sibling when positioning a
+            // Fill child, so the host overlaps pictureEdit13 and clips content.
+            const int iconRight = 52;
 
-            // Row positions — Y coordinates are stable; X/Width values that
-            // depend on host.Width are set by ApplyHostLayout below.
+            // ── Place content controls directly on panelControl19 ────────────
             int y = 10;
 
-            label54.Location   = new Point(0, y);
+            label54.Location   = new Point(iconRight, y);
             y += labelH + 4;
-            textEdit4.Location = new Point(0, y);
+            textEdit4.Location = new Point(iconRight, y);
             textEdit4.Height   = rowH;
             y += rowH + gap;
 
-            installDirLabel.Location = new Point(0, y);
+            installDirLabel.Location = new Point(iconRight, y);
             y += labelH + 4;
 
-            toggleRow.Location      = new Point(0, y);
-            _folderNameBox.Height   = 28;
+            toggleRow.Location    = new Point(iconRight, y);
+            _folderNameBox.Height = 28;
             y += 30 + gap;
 
-            simpleButton6.Location = new Point(0, y);
+            simpleButton6.Location = new Point(iconRight, y);
             int totalH = y + btnH + 10;
 
-            host.Controls.Add(label54);
-            host.Controls.Add(textEdit4);
-            host.Controls.Add(installDirLabel);
-            host.Controls.Add(folderLabel);
-            host.Controls.Add(toggleRow);
-            host.Controls.Add(_folderNameBox);
-            host.Controls.Add(simpleButton6);
-
-            // Width-dependent layout: called once on first layout pass and again on every resize.
-            void ApplyHostLayout()
+            // Width-dependent layout — stretches fields to panel width and
+            // right-anchors the Folder Name label + box.
+            void ApplyLayout()
             {
-                if (host.Width <= 0) return;
-                int rightX = host.Width - _folderNameBox.Width - rightPad;
-                if (rightX < 0) rightX = 0;
+                int availW = panelControl19.ClientSize.Width - iconRight - rightPad;
+                if (availW <= 0) return;
 
-                folderLabel.Left         = rightX;
-                folderLabel.Top          = installDirLabel.Top;   // keep Y in sync
-                _folderNameBox.Left      = rightX;
-                _folderNameBox.Top       = toggleRow.Top;         // keep Y in sync
-                textEdit4.Width          = host.Width - rightPad;
-                simpleButton6.Width      = host.Width - rightPad;
-                toggleRow.Width          = rightX - 8;
+                int folderBoxW = _folderNameBox.Width;  // fixed 200 px
+                int rightX     = iconRight + availW - folderBoxW;
+                if (rightX < iconRight) rightX = iconRight;
+
+                folderLabel.SetBounds(rightX, installDirLabel.Top, 0, 0, BoundsSpecified.Location);
+                _folderNameBox.SetBounds(rightX, toggleRow.Top,    0, 0, BoundsSpecified.Location);
+
+                textEdit4.Width      = availW;
+                simpleButton6.Width  = availW;
+                toggleRow.Width      = rightX - iconRight - 8;
             }
 
-            // Apply on every resize …
-            host.Resize += (s, e) => ApplyHostLayout();
-            // … and immediately after the host has been parented and sized.
-            host.HandleCreated += (s, e) => host.BeginInvoke((Action)ApplyHostLayout);
-
-            // Shrink panelControl19 to eliminate the dead space from hidden controls.
-            // Original: 224px. We need: padding(2) + totalH + padding(2).
-            panelControl19.Height = totalH + 4;
-
-            // Remove all existing children from panelControl19 except pictureEdit13,
-            // then add our host panel which fills the remaining space.
+            // Remove all legacy children from panelControl19, keep pictureEdit13.
             var keepControls = new System.Windows.Forms.Control[] { pictureEdit13 };
             for (int i = panelControl19.Controls.Count - 1; i >= 0; i--)
             {
@@ -3865,8 +3850,23 @@ namespace Valhalla
                     panelControl19.Controls.RemoveAt(i);
             }
 
-            // pictureEdit13 is DockStyle.Left — host fills the rest
-            panelControl19.Controls.Add(host);
+            // Add content controls directly to panelControl19.
+            panelControl19.Controls.Add(label54);
+            panelControl19.Controls.Add(textEdit4);
+            panelControl19.Controls.Add(installDirLabel);
+            panelControl19.Controls.Add(folderLabel);
+            panelControl19.Controls.Add(toggleRow);
+            panelControl19.Controls.Add(_folderNameBox);
+            panelControl19.Controls.Add(simpleButton6);
+
+            // Shrink panelControl19 to only the height we need.
+            panelControl19.Height = totalH + 4;
+
+            // Apply widths immediately (ClientSize is valid here since the
+            // designer set panelControl19.Size before ConfigureAgentBuildUi runs)
+            // and again whenever the window is resized.
+            ApplyLayout();
+            panelControl19.Resize += (s, e) => ApplyLayout();
         }
 
         private static void UpdateInstallDirButtonStyle(System.Windows.Forms.Button btn, bool selected)

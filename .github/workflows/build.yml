@@ -136,7 +136,6 @@ jobs:
 
   panel:
     name: Build Valhalla Panel
-    needs: [agent]
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -145,27 +144,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
-
-      - name: Download stub.bin
-        uses: actions/download-artifact@v4
-        with:
-          name: valhalla-agent-stub
-          path: stub-artifact
-
-      - name: Place stub.bin for panel build
-        shell: pwsh
-        run: |
-          # Place stub.bin at stub/stub.bin so the panel's LocateStub() finds it
-          # when walking up from panel/bin/Release/, and also embed it into the
-          # panel output directory so it ships alongside Valhalla.exe.
-          New-Item -ItemType Directory -Force -Path stub | Out-Null
-          Copy-Item -LiteralPath stub-artifact\stub.bin -Destination stub\stub.bin -Force
-
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path stub\stub.bin).Path)
-          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw 'stub\stub.bin MZ header check failed after download.'
-          }
-          Write-Host "stub\stub.bin ready: $($bytes.Length) bytes"
 
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v3
@@ -211,23 +189,64 @@ jobs:
             throw 'Panel executable is empty.'
           }
 
+      - name: Upload Valhalla.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valhalla.exe
+          path: panel/bin/Release/Valhalla.exe
+          if-no-files-found: error
+
+      - name: Upload panel binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: valhalla-panel-binaries
+          path: panel/bin/Release/*
+          if-no-files-found: error
+
+  panel-bundle:
+    name: Bundle Valhalla Panel with stub
+    needs: [agent, panel]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Download panel binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: valhalla-panel-binaries
+          path: panel-artifact
+
+      - name: Download stub.bin
+        uses: actions/download-artifact@v4
+        with:
+          name: valhalla-agent-stub
+          path: stub-artifact
+
+      - name: Validate stub.bin
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path stub-artifact\stub.bin).Path)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw 'stub\stub.bin MZ header check failed after download.'
+          }
+          Write-Host "stub.bin ready: $($bytes.Length) bytes"
+
       - name: Embed stub.bin into panel output
         shell: pwsh
         run: |
-          # Place stub.bin at panel/bin/Release/stub/stub.bin so it ships
+          # Place stub.bin at panel-artifact/stub/stub.bin so it ships
           # alongside Valhalla.exe in the artifact and in the release bundle.
           # LocateStub() will find it at depth 0 when the panel is run from
           # that directory: panel\bin\Release\ → looks for stub\stub.bin there.
-          $dest = Join-Path $PWD 'panel\bin\Release\stub'
+          $dest = Join-Path $PWD 'panel-artifact\stub'
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Copy-Item -LiteralPath stub\stub.bin -Destination "$dest\stub.bin" -Force
+          Copy-Item -LiteralPath stub-artifact\stub.bin -Destination "$dest\stub.bin" -Force
           Write-Host "stub.bin embedded at $dest\stub.bin"
 
       - name: Upload panel
         uses: actions/upload-artifact@v4
         with:
           name: valhalla-panel-windows-x64
-          path: panel/bin/Release/*
+          path: panel-artifact/*
           if-no-files-found: error
 
   quality:
@@ -313,7 +332,7 @@ jobs:
 
   package:
     name: Package build artifacts
-    needs: [agent, server, panel, quality]
+    needs: [agent, server, panel-bundle, quality]
     runs-on: ubuntu-24.04
     steps:
       - name: Download build artifacts

@@ -151,8 +151,8 @@ fn ensure_runtime_directories(config: &Config) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     if config.enable_onion {
-        fs::create_dir_all(&config.state_dir)?;
-        fs::create_dir_all(&config.cache_dir)?;
+        ensure_arti_storage_directory(&config.state_dir, "state")?;
+        ensure_arti_storage_directory(&config.cache_dir, "cache")?;
     }
     for path in [&config.panel_cert, &config.panel_key, &config.panel_ca_cert, &config.panel_ca_key, &config.panel_secret_file] {
         if let Some(parent) = path.parent() {
@@ -162,12 +162,81 @@ fn ensure_runtime_directories(config: &Config) -> io::Result<()> {
     Ok(())
 }
 
+fn ensure_arti_storage_directory(path: &Path, kind: &str) -> io::Result<()> {
+    fs::create_dir_all(path).map_err(|error| {
+        io::Error::new(error.kind(), format!("unable to create Arti {kind} directory {}: {error}", path.display()))
+    })?;
+
+    // Arti/fs-mistrust requires its state and cache to be private to trusted
+    // users.  We make the directories private before Arti sees them instead of
+    // relying on the caller's umask.  Existing contents are tightened too, so
+    // upgrading an older Valhalla installation cannot leave a stale 0755/0644
+    // object that makes Arti reject the whole storage tree.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let current_uid = unsafe { libc::geteuid() };
+        let metadata = fs::metadata(path).map_err(|error| {
+            io::Error::new(error.kind(), format!("inspect Arti {kind} directory {}: {error}", path.display()))
+        })?;
+        if metadata.uid() != current_uid && metadata.uid() != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "Arti {kind} directory {} is owned by uid {}, but the relay runs as uid {}; run the relay as the same service user that owns its persistent Valhalla data",
+                    path.display(), metadata.uid(), current_uid
+                ),
+            ));
+        }
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+            io::Error::new(error.kind(), format!("secure Arti {kind} directory {}: {error}", path.display()))
+        })?;
+
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).map_err(|error| {
+                io::Error::new(error.kind(), format!("read Arti {kind} directory {}: {error}", dir.display()))
+            })? {
+                let entry = entry.map_err(|error| {
+                    io::Error::new(error.kind(), format!("inspect Arti {kind} directory entry under {}: {error}", dir.display()))
+                })?;
+                let entry_path = entry.path();
+                let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
+                    io::Error::new(error.kind(), format!("inspect Arti {kind} storage {}: {error}", entry_path.display()))
+                })?;
+                let file_type = metadata.file_type();
+                if file_type.is_symlink() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Arti {kind} storage contains unsupported symlink {}", entry_path.display()),
+                    ));
+                }
+                if file_type.is_dir() {
+                    fs::set_permissions(&entry_path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+                        io::Error::new(error.kind(), format!("secure Arti {kind} directory {}: {error}", entry_path.display()))
+                    })?;
+                    stack.push(entry_path);
+                } else if file_type.is_file() {
+                    fs::set_permissions(&entry_path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+                        io::Error::new(error.kind(), format!("secure Arti {kind} file {}: {error}", entry_path.display()))
+                    })?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn prepare_runtime(config: &Config) -> io::Result<Zeroizing<Vec<u8>>> {
     validate_direct_listener_configuration(config)?;
     ensure_runtime_directories(config)?;
-    if config.panel_listen.is_some() {
-        ensure_panel_tls_credentials(config)?;
-    }
+    // Generate the CA/server certificate set independently of whether the
+    // external panel listener is enabled. The C# panel may need the CA file
+    // before a panel listener is enabled, and generation is idempotent.
+    ensure_panel_tls_credentials(config)?;
     ensure_panel_secret(&config.panel_secret_file)
 }
 
@@ -188,6 +257,11 @@ fn ensure_panel_tls_credentials(config: &Config) -> io::Result<()> {
         io::Error::new(io::ErrorKind::InvalidInput, "panel CA certificate path has no parent directory")
     })?;
     fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+    }
 
     let temp_dir = parent.join(format!(".valhalla-panel-certgen-{}", std::process::id()));
     if temp_dir.exists() {
@@ -1348,6 +1422,29 @@ mod tests {
     #[test]
     fn default_relay_identity_uses_lowercase_valhalla_nickname() {
         assert_eq!(Config::default().onion_nickname, "valhalla");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_arti_storage_directory_tightens_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("valhalla-arti-permissions-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let state = root.join("arti-state");
+        let nested = state.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("state.db"), b"test").unwrap();
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(nested.join("state.db"), fs::Permissions::from_mode(0o644)).unwrap();
+
+        ensure_arti_storage_directory(&state, "state").unwrap();
+        assert_eq!(fs::metadata(&state).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(&nested).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(nested.join("state.db")).unwrap().permissions().mode() & 0o777, 0o600);
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

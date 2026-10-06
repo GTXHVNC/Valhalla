@@ -12,14 +12,13 @@ mod transport;
 mod update;
 
 fn main() {
-    let argv: Vec<String> = std::env::args().collect();
-    if update::maybe_run_successor(&argv) {
+    if update::maybe_run_successor() {
         return;
     }
-    if update::maybe_run_probe(&argv) {
+    if update::maybe_run_probe() {
         return;
     }
-    let final_ready = match update::final_ready_args(&argv) {
+    let final_ready = match update::final_ready_args() {
         Ok(value) => value,
         Err(_) => std::process::exit(2),
     };

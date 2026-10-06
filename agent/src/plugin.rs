@@ -357,7 +357,7 @@ mod win {
 
         pub fn begin_transfer(&mut self, id: &str, transfer_id: &str, size: u64, hash: &str) -> Result<u64, String> {
             if id.is_empty() || transfer_id.is_empty() || !crate::update::validate_hash(hash, hash) { return Err("invalid plugin transfer metadata".into()); }
-            let base = std::env::temp_dir().join("valhalla_plugin_transfers");
+            let base = std::env::temp_dir().join("einherjar_plugin_transfers");
             fs::create_dir_all(&base).map_err(|e| e.to_string())?;
             let path = base.join(format!("{}-{}.part", id, transfer_id));
             let received = match fs::metadata(&path) { Ok(m) => m.len().min(size), Err(_) => 0 };

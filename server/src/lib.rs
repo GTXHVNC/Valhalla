@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, fs, io, net::{IpAddr, SocketAddr}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{fmt::Debug, fs, io, net::{IpAddr, SocketAddr}, path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -7,7 +7,10 @@ use arti_client::{config::TorClientConfigBuilder, TorClient};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use futures_util::{SinkExt, StreamExt};
+use sha2::{Digest as Sha2Digest, Sha256};
 use sha3::{Digest as Sha3Digest, Sha3_256};
+use hmac::{Hmac, Mac};
+use zeroize::Zeroizing;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UnixListener}, sync::{mpsc, OwnedSemaphorePermit, Semaphore, watch}, time::{interval, timeout}};
 use tor_cell::relaycell::msg::Connected;
 use tor_hsservice::{config::{OnionServiceConfigBuilder, TokenBucketConfig}, RunningOnionService, StreamRequest};
@@ -29,7 +32,6 @@ pub struct Config {
     pub onion_nickname: String,
     pub state_dir: PathBuf,
     pub cache_dir: PathBuf,
-    pub authorized_keys: PathBuf,
     pub local_listen: Option<String>,
     pub direct_listen: String,
     pub enable_onion: bool,
@@ -64,7 +66,6 @@ impl Default for Config {
             onion_nickname: "Valhalla".into(),
             state_dir: data_dir.join("arti-state"),
             cache_dir: data_dir.join("arti-cache"),
-            authorized_keys: PathBuf::from("/etc/valhalla/authorized_keys"),
             local_listen: None,
             direct_listen: DEFAULT_DIRECT_LISTEN.into(),
             enable_onion: true,
@@ -120,37 +121,21 @@ impl Metrics {
     }
 }
 
-#[derive(Clone)]
-struct KeyStore {
-    by_fingerprint: Arc<HashMap<String, Vec<VerifyingKey>>>,
+fn derive_agent_token(secret: &[u8]) -> io::Result<Zeroizing<String>> {
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid panel secret"))?;
+    mac.update(b"VALHALLA-AGENT-AUTH-V1\0");
+    let digest = mac.finalize().into_bytes();
+    Ok(Zeroizing::new(digest.iter().map(|b| format!("{b:02x}")).collect()))
 }
 
-impl KeyStore {
-    fn load(path: &Path) -> io::Result<Self> {
-        let contents = fs::read_to_string(path).map_err(|e| io::Error::new(e.kind(), format!("unable to read authorized key file {}: {e}", path.display())))?;
-        let mut by_fingerprint: HashMap<String, Vec<VerifyingKey>> = HashMap::new();
-        for (line_no, raw) in contents.lines().enumerate() {
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
-            let mut parts = line.split_whitespace();
-            let fingerprint = parts.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("authorized key line {} missing fingerprint", line_no + 1)))?;
-            let public_hex = parts.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("authorized key line {} missing public key", line_no + 1)))?;
-            if parts.next().is_some() || fingerprint.len() != 64 || !fingerprint.bytes().all(|b| b.is_ascii_hexdigit()) || public_hex.len() != 64 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("invalid authorized key line {}", line_no + 1)));
-            }
-            let public_bytes = hex32(public_hex).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("invalid public key on line {}", line_no + 1)))?;
-            let key = VerifyingKey::from_bytes(&public_bytes).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("invalid Ed25519 public key on line {}", line_no + 1)))?;
-            by_fingerprint.entry(fingerprint.to_ascii_lowercase()).or_default().push(key);
-        }
-        if by_fingerprint.is_empty() { return Err(io::Error::new(io::ErrorKind::InvalidData, "authorized key file contains no keys")); }
-        Ok(Self { by_fingerprint: Arc::new(by_fingerprint) })
-    }
-
-    fn verify(&self, fingerprint: &str, public_key: &[u8; 32], message: &[u8], signature: &Signature) -> bool {
-        let Some(keys) = self.by_fingerprint.get(&fingerprint.to_ascii_lowercase()) else { return false; };
-        if !keys.iter().any(|key| key.as_bytes() == public_key) { return false; }
-        keys.iter().filter(|key| key.as_bytes() == public_key).any(|key| key.verify(message, signature).is_ok())
-    }
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() { return false; }
+    let mut diff = 0u8;
+    for (&x, &y) in ab.iter().zip(bb.iter()) { diff |= x ^ y; }
+    diff == 0
 }
 
 #[derive(Debug)]
@@ -175,7 +160,7 @@ impl RateLimiter {
 
 pub struct Server {
     config: Config,
-    keys: KeyStore,
+    agent_token: Zeroizing<String>,
     metrics: Arc<Metrics>,
     ipc_tx: mpsc::Sender<Vec<u8>>,
     sequence: Arc<AtomicU64>,
@@ -200,7 +185,12 @@ impl Server {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "panel ID must be 1-64 ASCII graphic characters"));
         }
         validate_direct_listener_configuration(&config)?;
-        let keys = KeyStore::load(&config.authorized_keys)?;
+        let panel_secret = fs::read(&config.panel_secret_file).map_err(|e| io::Error::new(e.kind(), format!("unable to read panel secret {}: {e}", config.panel_secret_file.display())))?;
+        let panel_secret = panel_secret.iter().copied().filter(|b| !matches!(b, b'\r' | b'\n' | b'\t' | b' ')).collect::<Vec<u8>>();
+        if panel_secret.len() != 32 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "panel secret must contain exactly 32 bytes"));
+        }
+        let agent_token = derive_agent_token(&panel_secret)?;
         let (ipc_tx, ipc_rx) = mpsc::channel(config.max_ipc_queue);
         let panel_hub = PanelHub::new(config.max_ipc_queue);
         let (shutdown, _) = watch::channel(false);
@@ -208,7 +198,7 @@ impl Server {
             connection_limit: Arc::new(Semaphore::new(config.max_connections)),
             auth_limit: Arc::new(Semaphore::new(config.max_auth_inflight)),
             config,
-            keys,
+            agent_token,
             metrics: Arc::new(Metrics::default()),
             ipc_tx,
             sequence: Arc::new(AtomicU64::new(0)),
@@ -391,7 +381,7 @@ impl Server {
 
     fn clone_for_task(&self) -> Self {
         Self {
-            config: self.config.clone(), keys: self.keys.clone(), metrics: Arc::clone(&self.metrics), ipc_tx: self.ipc_tx.clone(),
+            config: self.config.clone(), agent_token: self.agent_token.clone(), metrics: Arc::clone(&self.metrics), ipc_tx: self.ipc_tx.clone(),
             sequence: Arc::clone(&self.sequence), connection_limit: Arc::clone(&self.connection_limit), auth_limit: Arc::clone(&self.auth_limit), shutdown: self.shutdown.clone(),
             registry: self.registry.clone(), control_limit: Arc::clone(&self.control_limit), session_ids: Arc::clone(&self.session_ids), panel_hub: self.panel_hub.clone(),
         }
@@ -495,18 +485,27 @@ impl Server {
     async fn websocket_session<S>(&self, stream: S, _peer: &str) -> io::Result<()>
     where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {
         let expected_path = self.config.websocket_path.clone();
+        let presented_token = Arc::new(Mutex::new(None::<String>));
+        let token_capture = Arc::clone(&presented_token);
         let callback = move |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response: tokio_tungstenite::tungstenite::handshake::server::Response| {
             if request.uri().path() != expected_path {
                 let mut error_response = response.map(|_| Some("invalid WebSocket path".to_owned()));
                 *error_response.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::NOT_FOUND;
                 return Err(error_response);
             }
+            let token = request.headers().get("X-VALHALLA-AGENT-TOKEN")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            if let Ok(mut slot) = token_capture.lock() {
+                *slot = token;
+            }
             Ok(response)
         };
         let mut ws = timeout(self.config.handshake_timeout, tokio_tungstenite::accept_hdr_async_with_config(stream, callback, Some(ws_config()))).await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "WebSocket handshake timeout"))?
             .map_err(ws_err)?;
-        let fingerprint = self.authenticate(&mut ws).await?;
+        let presented_token = presented_token.lock().ok().and_then(|slot| slot.clone());
+        let fingerprint = self.authenticate(&mut ws, presented_token.as_deref()).await?;
         let session_id = self.session_ids.fetch_add(1, Ordering::Relaxed);
         let mut command_registration = self.registry.register(fingerprint.clone(), session_id, self.config.max_agent_command_queue).await;
         let mut limiter = RateLimiter::new(self.config.max_messages_per_second);
@@ -576,11 +575,16 @@ impl Server {
         result
     }
 
-    async fn authenticate<S>(&self, ws: &mut tokio_tungstenite::WebSocketStream<S>) -> io::Result<String>
+    async fn authenticate<S>(&self, ws: &mut tokio_tungstenite::WebSocketStream<S>, presented_token: Option<&str>) -> io::Result<String>
     where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin {
         let permit = timeout(self.config.auth_timeout, self.auth_limit.clone().acquire_owned()).await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "authentication admission timeout"))?
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "authentication semaphore closed"))?;
+        if presented_token.is_none() || !constant_time_eq(presented_token.unwrap_or_default(), self.agent_token.as_str()) {
+            drop(permit);
+            self.metrics.auth_failure.fetch_add(1, Ordering::Relaxed);
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "authentication token rejected"));
+        }
         let first = timeout(self.config.auth_timeout, ws.next()).await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "authentication timeout"))?
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "client closed during authentication"))?
@@ -604,7 +608,13 @@ impl Server {
         let signature_bytes = STANDARD.decode(signature_b64).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid authentication signature"))?;
         let signature_array: [u8; 64] = signature_bytes.as_slice().try_into().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid authentication signature length"))?;
         let signature = Signature::from_bytes(&signature_array);
-        let valid = self.keys.verify(&fingerprint, &public_key, &valhalla_protocol::auth_message(&fingerprint, &nonce), &signature);
+        let expected_fingerprint = Sha256::digest(public_key);
+        let expected_fingerprint = hex_string(&expected_fingerprint);
+        let valid = fingerprint.eq_ignore_ascii_case(&expected_fingerprint)
+            && VerifyingKey::from_bytes(&public_key)
+                .ok()
+                .map(|key| key.verify(&valhalla_protocol::auth_message(&fingerprint, &nonce), &signature).is_ok())
+                .unwrap_or(false);
         drop(permit);
         if !valid {
             self.metrics.auth_failure.fetch_add(1, Ordering::Relaxed);
@@ -794,7 +804,7 @@ async fn materialize_relay_command(command: &str, config: &Config) -> Result<Arc
         return Err("direct-connect must omit the IP and port; the server discovers its public IP via ifconfig.me".into());
     }
     if !valhalla_protocol::is_supported_agent_command(normalized) {
-        return Err("command is not supported by the Valhalla agent protocol".into());
+        return Err("command is not supported by the Einherjar protocol".into());
     }
     Ok(Arc::<str>::from(normalized.to_owned()))
 }
@@ -954,6 +964,8 @@ fn parse_auth_response(line: &str) -> io::Result<(String, String)> {
     if parts.next().is_some() || public.len() != 64 || !public.bytes().all(|b| b.is_ascii_hexdigit()) { return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid authentication public key")); }
     Ok((public.to_ascii_lowercase(), signature.to_owned()))
 }
+
+fn hex_string(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
 
 fn hex32(value: &str) -> Option<[u8; 32]> {
     if value.len() != 64 { return None; }
@@ -1140,20 +1152,6 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
-    fn authorized_key_line_parses_and_verifies() {
-        let signing = SigningKey::from_bytes(&[9u8; 32]);
-        let fp = "a".repeat(64);
-        let pk = signing.verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>();
-        let text = format!("{fp} {pk}\n");
-        let path = std::env::temp_dir().join(format!("valhalla-keys-{}", std::process::id()));
-        fs::write(&path, text).unwrap();
-        let store = KeyStore::load(&path).unwrap();
-        let sig = signing.sign(&valhalla_protocol::auth_message(&fp, &[1,2,3]));
-        assert!(store.verify(&fp, &signing.verifying_key().to_bytes(), &valhalla_protocol::auth_message(&fp, &[1,2,3]), &sig));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
     fn rate_limiter_is_bounded() {
         let mut limiter = RateLimiter::new(2);
         assert!(limiter.allow());
@@ -1228,5 +1226,20 @@ mod tests {
         let mut config = Config::default();
         config.direct_listen = "127.0.0.1:4794".into();
         assert!(materialize_relay_command("CMD:DIRECT_CONNECT:127.0.0.1:4794", &config).await.is_err());
+    }
+}
+
+
+#[cfg(test)]
+mod agent_auth_token_tests {
+    use super::*;
+
+    #[test]
+    fn derive_agent_token_is_stable_and_hex() {
+        let first = derive_agent_token(b"12345678901234567890123456789012").unwrap();
+        let second = derive_agent_token(b"12345678901234567890123456789012").unwrap();
+        assert_eq!(first.as_str(), second.as_str());
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 }

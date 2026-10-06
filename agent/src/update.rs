@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -13,23 +12,19 @@ use sha2::{Digest, Sha256};
 use crate::{auth, telemetry, transport};
 
 const MAX_UPDATE_BYTES: usize = 64 * 1024 * 1024;
-const SUCCESSOR_FLAG: &str = "--valhalla-update-successor";
-const PROBE_FLAG: &str = "--valhalla-update-probe";
-const SOURCE_ARG: &str = "--valhalla-update-source=";
-const TARGET_ARG: &str = "--valhalla-update-target=";
-const HASH_ARG: &str = "--valhalla-update-hash=";
-const PARENT_ARG: &str = "--valhalla-update-parent=";
-const LAUNCH_ARG: &str = "--valhalla-update-agent-arg=";
-const AUTH_KEY_ARG: &str = "--valhalla-update-auth-key-file=";
-const ARTI_STATE_ARG: &str = "--valhalla-update-arti-state-dir=";
-const ARTI_CACHE_ARG: &str = "--valhalla-update-arti-cache-dir=";
-const HANDOFF_PORT_ARG: &str = "--valhalla-update-handoff-port=";
-const HANDOFF_TOKEN_ARG: &str = "--valhalla-update-handoff-token=";
-const FINGERPRINT_ARG: &str = "--valhalla-update-fingerprint=";
-const FINAL_PORT_ARG: &str = "--valhalla-update-final-port=";
-const FINAL_TOKEN_ARG: &str = "--valhalla-update-final-token=";
-const FINAL_HASH_ARG: &str = "--valhalla-update-final-hash=";
-const FINAL_FINGERPRINT_ARG: &str = "--valhalla-update-final-fingerprint=";
+const SUCCESSOR_ENV: &str = "EINHERJAR_UPDATE_SUCCESSOR";
+const PROBE_ENV: &str = "EINHERJAR_UPDATE_PROBE";
+const SOURCE_ENV: &str = "EINHERJAR_UPDATE_SOURCE";
+const TARGET_ENV: &str = "EINHERJAR_UPDATE_TARGET";
+const HASH_ENV: &str = "EINHERJAR_UPDATE_HASH";
+const PARENT_ENV: &str = "EINHERJAR_UPDATE_PARENT";
+const HANDOFF_PORT_ENV: &str = "EINHERJAR_UPDATE_HANDOFF_PORT";
+const HANDOFF_TOKEN_ENV: &str = "EINHERJAR_UPDATE_HANDOFF_TOKEN";
+const FINGERPRINT_ENV: &str = "EINHERJAR_UPDATE_FINGERPRINT";
+const FINAL_PORT_ENV: &str = "EINHERJAR_UPDATE_FINAL_PORT";
+const FINAL_TOKEN_ENV: &str = "EINHERJAR_UPDATE_FINAL_TOKEN";
+const FINAL_HASH_ENV: &str = "EINHERJAR_UPDATE_FINAL_HASH";
+const FINAL_FINGERPRINT_ENV: &str = "EINHERJAR_UPDATE_FINAL_FINGERPRINT";
 
 const PROBE_WAIT: Duration = Duration::from_secs(45);
 const CHILD_WAIT: Duration = Duration::from_secs(45);
@@ -220,7 +215,7 @@ fn tempfile_path() -> PathBuf {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     std::env::temp_dir().join(format!(
-        "valhalla-agent-update-{}-{timestamp:x}.exe",
+        "einherjar-update-{}-{timestamp:x}.exe",
         std::process::id()
     ))
 }
@@ -301,13 +296,9 @@ struct SuccessorArgs {
     target: PathBuf,
     hash: String,
     parent_pid: u32,
-    auth_key_file: Option<PathBuf>,
-    arti_state_dir: Option<PathBuf>,
-    arti_cache_dir: Option<PathBuf>,
     fingerprint: String,
     handoff_port: u16,
     handoff_token: String,
-    launch_args: Vec<OsString>,
 }
 
 fn parse_u16(value: &str, label: &str) -> Result<u16, String> {
@@ -320,59 +311,29 @@ fn parse_u16(value: &str, label: &str) -> Result<u16, String> {
     Ok(parsed)
 }
 
-fn successor_args(args: &[String]) -> Result<Option<SuccessorArgs>, String> {
-    let mut found = false;
-    let mut source = None;
-    let mut target = None;
-    let mut hash = None;
-    let mut parent_pid = None;
-    let mut auth_key_file = None;
-    let mut arti_state_dir = None;
-    let mut arti_cache_dir = None;
-    let mut fingerprint = None;
-    let mut handoff_port = None;
-    let mut handoff_token = None;
-    let mut launch_args = Vec::new();
+fn env_value(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.trim().is_empty())
+}
 
-    for argument in args {
-        if argument == SUCCESSOR_FLAG {
-            found = true;
-        } else if let Some(value) = argument.strip_prefix(SOURCE_ARG) {
-            source = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(TARGET_ARG) {
-            target = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(HASH_ARG) {
-            hash = Some(value.to_owned());
-        } else if let Some(value) = argument.strip_prefix(PARENT_ARG) {
-            parent_pid = Some(
-                value
-                    .parse::<u32>()
-                    .map_err(|_| "invalid update parent pid".to_owned())?,
-            );
-        } else if let Some(value) = argument.strip_prefix(AUTH_KEY_ARG) {
-            auth_key_file = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(ARTI_STATE_ARG) {
-            arti_state_dir = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(ARTI_CACHE_ARG) {
-            arti_cache_dir = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(FINGERPRINT_ARG) {
-            fingerprint = Some(value.to_owned());
-        } else if let Some(value) = argument.strip_prefix(HANDOFF_PORT_ARG) {
-            handoff_port = Some(parse_u16(value, "update handoff port")?);
-        } else if let Some(value) = argument.strip_prefix(HANDOFF_TOKEN_ARG) {
-            handoff_token = Some(value.to_owned());
-        } else if let Some(value) = argument.strip_prefix(LAUNCH_ARG) {
-            launch_args.push(OsString::from(value));
-        }
-    }
-
-    if !found {
+fn successor_args() -> Result<Option<SuccessorArgs>, String> {
+    if !std::env::var(SUCCESSOR_ENV).is_ok_and(|value| value == "1") {
         return Ok(None);
     }
 
-    let hash = hash.ok_or("missing update hash")?;
-    let fingerprint = fingerprint.ok_or("missing update fingerprint")?;
-    let handoff_token = handoff_token.ok_or("missing update handoff token")?;
+    let hash = env_value(HASH_ENV).ok_or("missing update hash")?;
+    let fingerprint = env_value(FINGERPRINT_ENV).ok_or("missing update fingerprint")?;
+    let handoff_token = env_value(HANDOFF_TOKEN_ENV).ok_or("missing update handoff token")?;
+    let parent_pid = env_value(PARENT_ENV)
+        .ok_or("missing update parent pid")?
+        .parse::<u32>()
+        .map_err(|_| "invalid update parent pid".to_owned())?;
+    let handoff_port = env_value(HANDOFF_PORT_ENV)
+        .ok_or("missing update handoff port")?
+        .parse::<u16>()
+        .map_err(|_| "invalid update handoff port".to_owned())?;
+    if handoff_port == 0 {
+        return Err("invalid update handoff port".into());
+    }
 
     if !validate_hash(&hash, &hash) {
         return Err("invalid update hash".into());
@@ -385,17 +346,13 @@ fn successor_args(args: &[String]) -> Result<Option<SuccessorArgs>, String> {
     }
 
     Ok(Some(SuccessorArgs {
-        source: source.ok_or("missing update source")?,
-        target: target.ok_or("missing update target")?,
+        source: PathBuf::from(env_value(SOURCE_ENV).ok_or("missing update source")?),
+        target: PathBuf::from(env_value(TARGET_ENV).ok_or("missing update target")?),
         hash,
-        parent_pid: parent_pid.ok_or("missing update parent pid")?,
-        auth_key_file,
-        arti_state_dir,
-        arti_cache_dir,
+        parent_pid,
         fingerprint,
-        handoff_port: handoff_port.ok_or("missing update handoff port")?,
+        handoff_port,
         handoff_token,
-        launch_args,
     }))
 }
 
@@ -574,22 +531,21 @@ fn replace_file(source: &Path, target: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn launch_updated(target: &Path, arguments: &[OsString]) -> io::Result<Child> {
+fn launch_updated(target: &Path) -> io::Result<Child> {
     use std::os::windows::process::CommandExt;
 
     Command::new(target)
-        .args(arguments)
         .creation_flags(0x0800_0000)
         .spawn()
 }
 
 #[cfg(not(windows))]
-fn launch_updated(target: &Path, arguments: &[OsString]) -> io::Result<Child> {
-    Command::new(target).args(arguments).spawn()
+fn launch_updated(target: &Path) -> io::Result<Child> {
+    Command::new(target).spawn()
 }
 
 fn rollback_path(target: &Path) -> PathBuf {
-    target.with_extension("exe.valhalla-backup")
+    target.with_extension("exe.einherjar-backup")
 }
 
 fn helper_path() -> PathBuf {
@@ -598,7 +554,7 @@ fn helper_path() -> PathBuf {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     std::env::temp_dir().join(format!(
-        "valhalla-agent-update-helper-{}-{timestamp:x}.exe",
+        "einherjar-update-helper-{}-{timestamp:x}.exe",
         std::process::id()
     ))
 }
@@ -624,15 +580,6 @@ fn notify_handoff_failure(port: u16, token: &str, reason: &str) {
     }
 }
 
-struct ProbeArgs {
-    auth_key_file: Option<PathBuf>,
-    arti_state_dir: Option<PathBuf>,
-    arti_cache_dir: Option<PathBuf>,
-    handoff_port: u16,
-    handoff_token: String,
-    expected_hash: String,
-    expected_fingerprint: String,
-}
 
 pub(crate) struct FinalReadyArgs {
     pub(crate) port: u16,
@@ -641,37 +588,12 @@ pub(crate) struct FinalReadyArgs {
     pub(crate) fingerprint: String,
 }
 
-pub(crate) fn final_ready_args(args: &[String]) -> Result<Option<FinalReadyArgs>, String> {
-    let mut found = false;
-    let mut port = None;
-    let mut token = None;
-    let mut hash = None;
-    let mut fingerprint = None;
-
-    for argument in args {
-        if let Some(value) = argument.strip_prefix(FINAL_PORT_ARG) {
-            if port.is_some() { return Err("duplicate update final port".into()); }
-            port = Some(parse_u16(value, "update final port")?);
-            found = true;
-        } else if let Some(value) = argument.strip_prefix(FINAL_TOKEN_ARG) {
-            if token.is_some() { return Err("duplicate update final token".into()); }
-            token = Some(value.to_owned());
-            found = true;
-        } else if let Some(value) = argument.strip_prefix(FINAL_HASH_ARG) {
-            if hash.is_some() { return Err("duplicate update final hash".into()); }
-            hash = Some(value.to_owned());
-            found = true;
-        } else if let Some(value) = argument.strip_prefix(FINAL_FINGERPRINT_ARG) {
-            if fingerprint.is_some() { return Err("duplicate update final fingerprint".into()); }
-            fingerprint = Some(value.to_owned());
-            found = true;
-        }
-    }
-
-    if !found { return Ok(None); }
-    let token = token.ok_or("missing update final token")?;
-    let hash = hash.ok_or("missing update final hash")?;
-    let fingerprint = fingerprint.ok_or("missing update final fingerprint")?;
+pub(crate) fn final_ready_args() -> Result<Option<FinalReadyArgs>, String> {
+    let Some(port) = env_value(FINAL_PORT_ENV) else { return Ok(None); };
+    let token = env_value(FINAL_TOKEN_ENV).ok_or("missing update final token")?;
+    let hash = env_value(FINAL_HASH_ENV).ok_or("missing update final hash")?;
+    let fingerprint = env_value(FINAL_FINGERPRINT_ENV).ok_or("missing update final fingerprint")?;
+    let port = parse_u16(&port, "update final port")?;
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("invalid update final token".into());
     }
@@ -681,55 +603,22 @@ pub(crate) fn final_ready_args(args: &[String]) -> Result<Option<FinalReadyArgs>
     if !valid_fingerprint(&fingerprint) {
         return Err("invalid update final fingerprint".into());
     }
-    Ok(Some(FinalReadyArgs {
-        port: port.ok_or("missing update final port")?,
-        token,
-        hash,
-        fingerprint,
-    }))
+    Ok(Some(FinalReadyArgs { port, token, hash, fingerprint }))
 }
+fn probe_entry() -> Result<(), String> {
+    let source = std::env::current_exe().map_err(|error| error.to_string())?;
+    let handoff_port = env_value(HANDOFF_PORT_ENV)
+        .ok_or("missing probe handoff port")?
+        .parse::<u16>()
+        .map_err(|_| "invalid probe handoff port".to_owned())?;
+    let handoff_token = env_value(HANDOFF_TOKEN_ENV).ok_or("missing probe handoff token")?;
+    let expected_hash = env_value(HASH_ENV).ok_or("missing probe update hash")?;
+    let expected_fingerprint = env_value(FINGERPRINT_ENV).ok_or("missing probe fingerprint")?;
 
-fn probe_args(args: &[String]) -> Result<Option<ProbeArgs>, String> {
-    let mut found = false;
-    let mut auth_key_file = None;
-    let mut arti_state_dir = None;
-    let mut arti_cache_dir = None;
-    let mut handoff_port = None;
-    let mut handoff_token = None;
-    let mut expected_hash = None;
-    let mut expected_fingerprint = None;
-
-    for argument in args {
-        if argument == PROBE_FLAG {
-            found = true;
-        } else if let Some(value) = argument.strip_prefix(AUTH_KEY_ARG) {
-            auth_key_file = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(ARTI_STATE_ARG) {
-            arti_state_dir = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(ARTI_CACHE_ARG) {
-            arti_cache_dir = Some(PathBuf::from(value));
-        } else if let Some(value) = argument.strip_prefix(HANDOFF_PORT_ARG) {
-            handoff_port = Some(parse_u16(value, "probe handoff port")?);
-        } else if let Some(value) = argument.strip_prefix(HANDOFF_TOKEN_ARG) {
-            handoff_token = Some(value.to_owned());
-        } else if let Some(value) = argument.strip_prefix(HASH_ARG) {
-            expected_hash = Some(value.to_owned());
-        } else if let Some(value) = argument.strip_prefix(FINGERPRINT_ARG) {
-            expected_fingerprint = Some(value.to_owned());
-        }
+    if handoff_port == 0 {
+        return Err("invalid probe handoff port".into());
     }
-
-    if !found {
-        return Ok(None);
-    }
-
-    let handoff_token = handoff_token.ok_or("missing probe handoff token")?;
-    let expected_hash = expected_hash.ok_or("missing probe update hash")?;
-    let expected_fingerprint = expected_fingerprint.ok_or("missing probe fingerprint")?;
-
-    if handoff_token.len() != 64
-        || !handoff_token.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+    if handoff_token.len() != 64 || !handoff_token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("invalid probe handoff token".into());
     }
     if !validate_hash(&expected_hash, &expected_hash) {
@@ -739,32 +628,13 @@ fn probe_args(args: &[String]) -> Result<Option<ProbeArgs>, String> {
         return Err("invalid probe fingerprint".into());
     }
 
-    Ok(Some(ProbeArgs {
-        auth_key_file,
-        arti_state_dir,
-        arti_cache_dir,
-        handoff_port: handoff_port.ok_or("missing probe handoff port")?,
-        handoff_token,
-        expected_hash,
-        expected_fingerprint,
-    }))
-}
-
-fn probe_entry(args: &[String]) -> Result<(), String> {
-    let probe = probe_args(args)?.ok_or("probe flag missing")?;
-    let source = std::env::current_exe().map_err(|error| error.to_string())?;
-
     run_probe(
         &source,
-        probe.auth_key_file.as_deref(),
-        probe.arti_state_dir.as_deref(),
-        probe.arti_cache_dir.as_deref(),
-        probe.handoff_port,
-        &probe.handoff_token,
-        &probe.expected_hash,
-        &probe.expected_fingerprint,
-    )
-    .map_err(|error| error.to_string())
+        handoff_port,
+        &handoff_token,
+        &expected_hash,
+        &expected_fingerprint,
+    ).map_err(|error| error.to_string())
 }
 
 pub(crate) fn notify_final_ready(final_args: &FinalReadyArgs) -> io::Result<()> {
@@ -845,15 +715,17 @@ fn spawn_probe(successor: &SuccessorArgs) -> io::Result<Child> {
     use std::os::windows::process::CommandExt;
 
     let mut command = Command::new(&successor.source);
-    command.arg(PROBE_FLAG);
-    if let Some(path) = &successor.auth_key_file { command.arg(format!("{AUTH_KEY_ARG}{}", path.display())); }
-    if let Some(path) = &successor.arti_state_dir { command.arg(format!("{ARTI_STATE_ARG}{}", path.display())); }
-    if let Some(path) = &successor.arti_cache_dir { command.arg(format!("{ARTI_CACHE_ARG}{}", path.display())); }
     command
-        .arg(format!("{HANDOFF_PORT_ARG}{}", successor.handoff_port))
-        .arg(format!("{HANDOFF_TOKEN_ARG}{}", successor.handoff_token))
-        .arg(format!("{HASH_ARG}{}", successor.hash))
-        .arg(format!("{FINGERPRINT_ARG}{}", successor.fingerprint));
+        .env_remove(SUCCESSOR_ENV)
+        .env_remove(FINAL_PORT_ENV)
+        .env_remove(FINAL_TOKEN_ENV)
+        .env_remove(FINAL_HASH_ENV)
+        .env_remove(FINAL_FINGERPRINT_ENV)
+        .env(PROBE_ENV, "1")
+        .env(HANDOFF_PORT_ENV, successor.handoff_port.to_string())
+        .env(HANDOFF_TOKEN_ENV, &successor.handoff_token)
+        .env(HASH_ENV, &successor.hash)
+        .env(FINGERPRINT_ENV, &successor.fingerprint);
 
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
@@ -864,7 +736,6 @@ fn spawn_probe(successor: &SuccessorArgs) -> io::Result<Child> {
 
 fn restart_original_after_failure(
     target: &Path,
-    arguments: &[OsString],
     source: &Path,
     target_tmp: &Path,
     backup: &Path,
@@ -888,7 +759,7 @@ fn restart_original_after_failure(
         }
     }
 
-    let restart_error = launch_updated(target, arguments).map(|_| ()).err();
+    let restart_error = launch_updated(target).map(|_| ()).err();
 
     let _ = fs::remove_file(source);
     let _ = fs::remove_file(target_tmp);
@@ -927,7 +798,7 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
     };
 
     let target_tmp = parent.join(format!(
-        ".valhalla-update-{}.new.exe",
+        ".einherjar-update-{}.new.exe",
         std::process::id()
     ));
     let backup = rollback_path(&successor.target);
@@ -937,7 +808,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
         Err(error) => {
             return restart_original_after_failure(
                 &successor.target,
-                &successor.launch_args,
                 &successor.source,
                 &target_tmp,
                 &backup,
@@ -951,7 +821,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
     if !validate_hash(&successor.hash, &staged_hash) {
         return restart_original_after_failure(
             &successor.target,
-            &successor.launch_args,
             &successor.source,
             &target_tmp,
             &backup,
@@ -965,7 +834,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
     if let Err(error) = fs::create_dir_all(parent) {
         return restart_original_after_failure(
             &successor.target,
-            &successor.launch_args,
             &successor.source,
             &target_tmp,
             &backup,
@@ -981,7 +849,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
     if let Err(error) = fs::copy(&successor.source, &target_tmp) {
         return restart_original_after_failure(
             &successor.target,
-            &successor.launch_args,
             &successor.source,
             &target_tmp,
             &backup,
@@ -994,7 +861,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
         Err(error) => {
             return restart_original_after_failure(
                 &successor.target,
-                &successor.launch_args,
                 &successor.source,
                 &target_tmp,
                 &backup,
@@ -1005,7 +871,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
     if !validate_hash(&successor.hash, &target_tmp_hash) {
         return restart_original_after_failure(
             &successor.target,
-            &successor.launch_args,
             &successor.source,
             &target_tmp,
             &backup,
@@ -1020,7 +885,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
         if let Err(error) = fs::copy(&successor.target, &backup) {
             return restart_original_after_failure(
                 &successor.target,
-                &successor.launch_args,
                 &successor.source,
                 &target_tmp,
                 &backup,
@@ -1048,7 +912,6 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
     if let Some(error) = replacement_error {
         return restart_original_after_failure(
             &successor.target,
-            &successor.launch_args,
             &successor.source,
             &target_tmp,
             &backup,
@@ -1084,16 +947,25 @@ fn replace_and_launch(successor: &SuccessorArgs) -> io::Result<()> {
         }
     };
 
-    let mut final_args = successor.launch_args.clone();
-    final_args.push(OsString::from(format!("{FINAL_PORT_ARG}{final_port}")));
-    final_args.push(OsString::from(format!("{FINAL_TOKEN_ARG}{}", successor.handoff_token)));
-    final_args.push(OsString::from(format!("{FINAL_HASH_ARG}{}", successor.hash)));
-    final_args.push(OsString::from(format!(
-        "{FINAL_FINGERPRINT_ARG}{}",
-        successor.fingerprint
-    )));
+    let mut final_command = Command::new(&successor.target);
+    final_command
+        .env_remove(SUCCESSOR_ENV)
+        .env_remove(PROBE_ENV)
+        .env_remove(SOURCE_ENV)
+        .env_remove(TARGET_ENV)
+        .env_remove(HASH_ENV)
+        .env_remove(PARENT_ENV)
+        .env_remove(HANDOFF_PORT_ENV)
+        .env_remove(HANDOFF_TOKEN_ENV)
+        .env_remove(FINGERPRINT_ENV)
+        .env(FINAL_PORT_ENV, final_port.to_string())
+        .env(FINAL_TOKEN_ENV, &successor.handoff_token)
+        .env(FINAL_HASH_ENV, &successor.hash)
+        .env(FINAL_FINGERPRINT_ENV, &successor.fingerprint);
+    #[cfg(windows)]
+    final_command.creation_flags(0x0800_0000);
 
-    let mut final_child = match launch_updated(&successor.target, &final_args) {
+    let mut final_child = match final_command.spawn() {
         Ok(child) => child,
         Err(error) => {
             return restart_after_final_failure(successor, &target_tmp, &backup, error);
@@ -1215,7 +1087,7 @@ fn restart_after_final_failure(
     }
 
     let restart_error = if restored {
-        launch_updated(&successor.target, &successor.launch_args)
+        launch_updated(&successor.target)
             .map(|_| ())
             .err()
     } else {
@@ -1364,26 +1236,14 @@ pub(crate) fn spawn_successor(
 
     let mut command = Command::new(&helper);
     command
-        .arg(SUCCESSOR_FLAG)
-        .arg(format!("{SOURCE_ARG}{}", staged.display()))
-        .arg(format!("{TARGET_ARG}{}", target.display()))
-        .arg(format!("{HASH_ARG}{hash}"))
-        .arg(format!("{PARENT_ARG}{parent_pid}"))
-        .arg(format!("{FINGERPRINT_ARG}{fingerprint}"))
-        .arg(format!("{HANDOFF_PORT_ARG}{handoff_port}"))
-        .arg(format!("{HANDOFF_TOKEN_ARG}{}", handoff.token));
-
-    for argument in std::env::args_os().skip(1) {
-        // Preserve only non-endpoint runtime configuration. Endpoint data is never
-        // forwarded; the successor reads ./stub/stub.bin from its current directory.
-        let text = argument.to_string_lossy();
-        if text == "--endpoint" || text == "--ip" || text == "--port" || text.starts_with("--valhalla-update-server-") {
-            continue;
-        }
-        let mut forwarded = OsString::from(LAUNCH_ARG);
-        forwarded.push(argument);
-        command.arg(forwarded);
-    }
+        .env(SUCCESSOR_ENV, "1")
+        .env(SOURCE_ENV, staged)
+        .env(TARGET_ENV, target)
+        .env(HASH_ENV, &hash)
+        .env(PARENT_ENV, parent_pid.to_string())
+        .env(FINGERPRINT_ENV, &fingerprint)
+        .env(HANDOFF_PORT_ENV, handoff_port.to_string())
+        .env(HANDOFF_TOKEN_ENV, &handoff.token);
 
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
@@ -1397,9 +1257,9 @@ pub(crate) fn spawn_successor(
     Ok(handoff)
 }
 
-pub(crate) fn maybe_run_probe(args: &[String]) -> bool {
-    if args.iter().any(|argument| argument == PROBE_FLAG) {
-        match probe_entry(args) {
+pub(crate) fn maybe_run_probe() -> bool {
+    if std::env::var(PROBE_ENV).ok().as_deref() == Some("1") {
+        match probe_entry() {
             Ok(()) => std::process::exit(0),
             Err(_) => std::process::exit(1),
         }
@@ -1407,8 +1267,8 @@ pub(crate) fn maybe_run_probe(args: &[String]) -> bool {
     false
 }
 
-pub(crate) fn maybe_run_successor(args: &[String]) -> bool {
-    match successor_args(args) {
+pub(crate) fn maybe_run_successor() -> bool {
+    match successor_args() {
         Ok(None) => false,
         Ok(Some(successor)) => {
             if run_successor(successor).is_err() {
@@ -1422,9 +1282,6 @@ pub(crate) fn maybe_run_successor(args: &[String]) -> bool {
 
 fn run_probe(
     source: &Path,
-    auth_key_file: Option<&Path>,
-    arti_state_dir: Option<&Path>,
-    arti_cache_dir: Option<&Path>,
     handoff_port: u16,
     handoff_token: &str,
     expected_hash: &str,
@@ -1447,32 +1304,20 @@ fn run_probe(
         ));
     }
 
-    let key_path = auth_key_file.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "probe authentication key missing")
-    })?;
-    let (endpoint, endpoint_display) = crate::stub::load_endpoint()
+    let (endpoint, endpoint_display, _install_dir, _folder_name, agent_token) = crate::stub::load_config()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    let signing_key = auth::load_signing_key(key_path)?;
-    let state_dir = arti_state_dir.map(Path::to_owned).unwrap_or_else(|| {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Valhalla")
-            .join("arti-state")
-    });
-    let cache_dir = arti_cache_dir.map(Path::to_owned).unwrap_or_else(|| {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Valhalla")
-            .join("arti-cache")
-    });
+    let signing_key = auth::signing_key();
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let state_dir = base.join("Einherjar").join("arti-state");
+    let cache_dir = base.join("Einherjar").join("arti-cache");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("probe runtime: {e}")))?;
     runtime.block_on(async {
-        let mut connector = transport::Connector::new(endpoint, state_dir, cache_dir);
+        let mut connector = transport::Connector::new(endpoint, state_dir, cache_dir, agent_token);
         let mut session = connector
             .connect_authenticated(
                 &actual_fingerprint,
@@ -1532,7 +1377,7 @@ mod tests {
 
     #[test]
     fn sha256_and_hash_validation() {
-        let value = sha256_hex(b"valhalla-update");
+        let value = sha256_hex(b"einherjar-update");
         assert_eq!(value.len(), 64);
         assert!(validate_hash(&value, &value.to_uppercase()));
         assert!(!validate_hash(&"0".repeat(64), &value));
@@ -1561,24 +1406,11 @@ mod tests {
     }
 
     #[test]
-    fn final_ready_args_require_all_authenticated_fields() {
-        let token = "a".repeat(64);
-        let hash = "b".repeat(64);
-        let fingerprint = "c".repeat(64);
-        let args = vec![
-            FINAL_PORT_ARG.to_owned() + "49152",
-            FINAL_TOKEN_ARG.to_owned() + &token,
-            FINAL_HASH_ARG.to_owned() + &hash,
-            FINAL_FINGERPRINT_ARG.to_owned() + &fingerprint,
-        ];
-        let parsed = final_ready_args(&args).expect("valid final args").expect("final args present");
-        assert_eq!(parsed.port, 49152);
-        assert_eq!(parsed.token, token);
-        assert_eq!(parsed.hash, hash);
-        assert_eq!(parsed.fingerprint, fingerprint);
-
-        let mut duplicate = args.clone();
-        duplicate.push(FINAL_HASH_ARG.to_owned() + &"d".repeat(64));
-        assert!(final_ready_args(&duplicate).is_err());
+    fn final_ready_protocol_uses_environment_contract() {
+        assert!(FINAL_PORT_ENV.starts_with("EINHERJAR_UPDATE_"));
+        assert!(FINAL_TOKEN_ENV.starts_with("EINHERJAR_UPDATE_"));
+        assert!(FINAL_HASH_ENV.starts_with("EINHERJAR_UPDATE_"));
+        assert!(FINAL_FINGERPRINT_ENV.starts_with("EINHERJAR_UPDATE_"));
     }
+
 }

@@ -21,7 +21,7 @@ namespace Valhalla
         public int InstallDirectory { get; set; } = 1;
 
         /// <summary>Folder name appended to the selected install directory.</summary>
-        public string FolderName { get; set; } = "Valhalla";
+        public string FolderName { get; set; } = "Einherjar";
 
         [ScriptIgnore]
         public string AuthenticationSecret
@@ -41,7 +41,7 @@ namespace Valhalla
                 CaCertificatePath = CaCertificatePath ?? string.Empty,
                 OnionAddress = OnionAddress ?? string.Empty,
                 InstallDirectory = InstallDirectory,
-                FolderName = string.IsNullOrEmpty(FolderName) ? "Valhalla" : FolderName
+                FolderName = string.IsNullOrEmpty(FolderName) ? "Einherjar" : FolderName
             };
         }
 
@@ -92,6 +92,10 @@ namespace Valhalla
                 settings = settings ?? new RelaySettings();
                 if (string.IsNullOrWhiteSpace(settings.CaCertificatePath))
                     settings.CaCertificatePath = RelativeCertificatePath;
+                if (string.Equals(settings.FolderName, "Valhalla", StringComparison.OrdinalIgnoreCase))
+                    settings.FolderName = "Einherjar";
+                if (string.IsNullOrWhiteSpace(settings.FolderName))
+                    settings.FolderName = "Einherjar";
                 return settings;
             }
             catch

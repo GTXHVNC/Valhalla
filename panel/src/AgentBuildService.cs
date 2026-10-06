@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
 namespace Valhalla
@@ -23,14 +24,14 @@ namespace Valhalla
         /// never modified.
         /// </summary>
         public static void PatchAndDeploy(string onionAddress, int installDirectory,
-                                          string folderName, string outputPath)
+                                          string folderName, string agentToken, string outputPath)
         {
             string normalizedEndpoint = ValidateOnionAddress(onionAddress);
             if (installDirectory < 0 || installDirectory > 4)
                 throw new ArgumentOutOfRangeException(nameof(installDirectory),
                     "Install directory index must be 0–4.");
             if (string.IsNullOrWhiteSpace(folderName))
-                folderName = "Valhalla";
+                folderName = "Einherjar";
 
             string stubPath = LocateStub();
 
@@ -49,14 +50,16 @@ namespace Valhalla
             byte[] image = File.ReadAllBytes(stubPath);
 
             // Build the configuration block.
-            byte[] block = BuildConfigBlock(installDirectory, folderName, normalizedEndpoint);
+            if (string.IsNullOrWhiteSpace(agentToken))
+                throw new ArgumentException("Relay agent authorization token is required.", nameof(agentToken));
+            byte[] block = BuildConfigBlock(installDirectory, folderName, normalizedEndpoint, agentToken);
 
             // Find the magic sentinel in the image and write the block immediately after it.
             int offset = FindMagic(image);
             if (offset < 0)
                 throw new InvalidDataException(
                     "stub.bin does not contain the Valhalla configuration sentinel. " +
-                    "Ensure stub.bin was produced by the Valhalla agent build.");
+                    "Ensure stub.bin was produced by the Einherjar build.");
 
             // Validate that the block fits in the space allocated after the sentinel.
             int payloadOffset = offset + Magic.Length;
@@ -77,6 +80,18 @@ namespace Valhalla
             File.WriteAllBytes(tmp, image);
             if (File.Exists(outputPath)) File.Delete(outputPath);
             File.Move(tmp, outputPath);
+        }
+
+
+        public static string DeriveAgentToken(string relaySecret)
+        {
+            if (string.IsNullOrEmpty(relaySecret))
+                throw new ArgumentException("Relay authentication secret is required to derive the agent token.", nameof(relaySecret));
+            using (var hmac = new HMACSHA256(Encoding.ASCII.GetBytes(relaySecret)))
+            {
+                byte[] material = Encoding.ASCII.GetBytes("VALHALLA-AGENT-AUTH-V1\0");
+                return BitConverter.ToString(hmac.ComputeHash(material)).Replace("-", string.Empty).ToLowerInvariant();
+            }
         }
 
         public static string ValidateOnionAddress(string value)
@@ -106,15 +121,18 @@ namespace Valhalla
         ///   [n+2..]     onion       : UTF-8
         /// Must match the parser in agent/src/stub.rs exactly.
         /// </summary>
-        private static byte[] BuildConfigBlock(int installDir, string folderName, string onion)
+        private static byte[] BuildConfigBlock(int installDir, string folderName, string onion, string agentToken)
         {
             byte[] folderBytes = Encoding.UTF8.GetBytes(folderName);
             byte[] onionBytes  = Encoding.UTF8.GetBytes(onion);
+            byte[] tokenBytes  = Encoding.UTF8.GetBytes(agentToken.Trim());
 
             if (folderBytes.Length > 260)
                 throw new ArgumentException("Folder name is too long (max 260 UTF-8 bytes).");
             if (onionBytes.Length > 512)
                 throw new ArgumentException("Onion address is too long (max 512 UTF-8 bytes).");
+            if (tokenBytes.Length == 0 || tokenBytes.Length > 256)
+                throw new ArgumentException("Relay agent authorization token must be 1–256 UTF-8 bytes.");
 
             using (var ms = new MemoryStream())
             using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
@@ -124,6 +142,8 @@ namespace Valhalla
                 bw.Write(folderBytes);
                 bw.Write((ushort)onionBytes.Length);
                 bw.Write(onionBytes);
+                bw.Write((ushort)tokenBytes.Length);
+                bw.Write(tokenBytes);
                 bw.Flush();
                 return ms.ToArray();
             }
@@ -161,7 +181,7 @@ namespace Valhalla
             }
 
             throw new FileNotFoundException(
-                "stub/stub.bin was not found. Place the pre-compiled Valhalla agent binary at " +
+                "stub/stub.bin was not found. Place the pre-compiled Einherjar binary at " +
                 "stub\\stub.bin alongside Valhalla.exe, or set VALHALLA_STUB_PATH.");
         }
     }

@@ -27,7 +27,6 @@ fn parse_args() -> io::Result<Config> {
             "--nickname" => config.onion_nickname = next(&mut args, "nickname")?,
             "--state-dir" => config.state_dir = PathBuf::from(next(&mut args, "state-dir")?),
             "--cache-dir" => config.cache_dir = PathBuf::from(next(&mut args, "cache-dir")?),
-            "--authorized-keys" => config.authorized_keys = PathBuf::from(next(&mut args, "authorized-keys")?),
             "--local-listen" => config.local_listen = Some(next(&mut args, "local-listen")?),
             "--max-agent-command-queue" => config.max_agent_command_queue = parse_usize(&next(&mut args, "max-agent-command-queue")?)?,
             "--max-broadcast-targets" => config.max_broadcast_targets = parse_usize(&next(&mut args, "max-broadcast-targets")?)?,
@@ -53,7 +52,7 @@ fn parse_args() -> io::Result<Config> {
             "--ping-interval" => config.ping_interval = parse_seconds(&next(&mut args, "ping-interval")?)?,
             "--metrics-interval" => config.metrics_interval = parse_seconds(&next(&mut args, "metrics-interval")?)?,
             "--help" | "-h" => {
-                println!("valhalla-relay options: --nickname N --state-dir DIR --cache-dir DIR --authorized-keys FILE --local-listen ADDR --no-onion --local-socket PATH --control-socket PATH --panel-listen ADDR --panel-cert FILE --panel-key FILE --panel-secret-file FILE --panel-id ID --panel-max-connections N --path PATH --onion-port PORT --max-connections N --max-auth-inflight N --ipc-queue N --message-rate N --max-agent-command-queue N --max-broadcast-targets N --max-control-requests-per-second N --handshake-timeout S --auth-timeout S --idle-timeout S --ping-interval S --metrics-interval S");
+                println!("valhalla-relay options: --nickname N --state-dir DIR --cache-dir DIR --local-listen ADDR --no-onion --local-socket PATH --control-socket PATH --panel-listen ADDR --panel-cert FILE --panel-key FILE --panel-secret-file FILE --panel-id ID --panel-max-connections N --path PATH --onion-port PORT --max-connections N --max-auth-inflight N --ipc-queue N --message-rate N --max-agent-command-queue N --max-broadcast-targets N --max-control-requests-per-second N --handshake-timeout S --auth-timeout S --idle-timeout S --ping-interval S --metrics-interval S");
                 std::process::exit(0);
             }
             other => return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("unknown option {other}"))),

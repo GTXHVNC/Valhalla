@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf, sync::Arc, time::Duration};
+use std::{io, sync::Arc, time::Duration};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tokio::time::{interval, sleep};
@@ -18,7 +18,7 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
     let fp = telemetry::fingerprint();
     let host = telemetry::host(&fp);
 
-    let signing_key = Arc::new(auth::load_signing_key(&args.auth_key_file)?);
+    let signing_key = Arc::new(auth::signing_key());
 
     let primary_endpoint = args.endpoint.clone();
     let endpoint_path = primary_endpoint.path().to_owned();
@@ -28,6 +28,7 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
         active_endpoint.clone(),
         args.arti_state_dir.clone(),
         args.arti_cache_dir.clone(),
+        args.agent_token.clone(),
     );
     let mut plugins = Manager::new();
     let mut delay = args.retry_base;

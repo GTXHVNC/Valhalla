@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   agent:
-    name: Build and test Valhalla Agent
+    name: Build and test Einherjar
     runs-on: windows-2022
     timeout-minutes: 30
     defaults:
@@ -53,8 +53,8 @@ jobs:
       - name: Build agent
         shell: pwsh
         run: |
-          cargo build --release --manifest-path Cargo.toml --bin valhalla_agent
-          $exe = 'target\release\valhalla_agent.exe'
+          cargo build --release --manifest-path Cargo.toml --bin einherjar
+          $exe = 'target\release\einherjar.exe'
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
             throw "Agent executable was not produced: $exe"
           }
@@ -68,7 +68,7 @@ jobs:
           # The compiled PE is the stub template. Rename it .bin so the panel
           # treats it as a raw binary blob rather than an executable, exactly
           # as the architecture requires (valid PE, non-.exe extension).
-          $exe  = 'target\release\valhalla_agent.exe'
+          $exe  = 'target\release\einherjar.exe'
           $stub = 'target\release\stub.bin'
           Copy-Item -LiteralPath $exe -Destination $stub -Force
           $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $stub).Path)
@@ -80,7 +80,7 @@ jobs:
       - name: Upload stub.bin
         uses: actions/upload-artifact@v4
         with:
-          name: valhalla-agent-stub
+          name: einherjar-stub
           path: agent/target/release/stub.bin
           if-no-files-found: error
 
@@ -218,7 +218,7 @@ jobs:
       - name: Download stub.bin
         uses: actions/download-artifact@v4
         with:
-          name: valhalla-agent-stub
+          name: einherjar-stub
           path: stub-artifact
 
       - name: Validate stub.bin
@@ -354,7 +354,7 @@ jobs:
           # Also place stub.bin at release/stub/stub.bin so LocateStub() finds
           # it when walking up from release/panel/ → release/ → stub/stub.bin.
           mkdir -p release/stub
-          cp artifacts/valhalla-agent-stub/stub.bin release/stub/stub.bin
+          cp artifacts/einherjar-stub/stub.bin release/stub/stub.bin
 
           cp artifacts/valhalla-relay-linux-x64/valhalla-relay release/server/valhalla-relay
 

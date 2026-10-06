@@ -195,12 +195,13 @@ pub struct Connector {
     endpoint: Endpoint,
     state_dir: PathBuf,
     cache_dir: PathBuf,
+    agent_token: Zeroizing<String>,
     tor: Option<Arc<TorClient<PreferredRuntime>>>,
 }
 
 impl Connector {
-    pub fn new(endpoint: Endpoint, state_dir: PathBuf, cache_dir: PathBuf) -> Self {
-        Self { endpoint, state_dir, cache_dir, tor: None }
+    pub fn new(endpoint: Endpoint, state_dir: PathBuf, cache_dir: PathBuf, agent_token: String) -> Self {
+        Self { endpoint, state_dir, cache_dir, agent_token: Zeroizing::new(agent_token), tor: None }
     }
 
     pub fn endpoint(&self) -> &Endpoint {
@@ -247,6 +248,7 @@ impl Connector {
         let request = Request::builder()
             .uri(uri.as_str())
             .header("Host", authority.as_str())
+            .header("X-VALHALLA-AGENT-TOKEN", self.agent_token.as_str())
             .body(())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
 

@@ -69,7 +69,7 @@ def request(socket_path: Path, target: str, command: str, request_id: str | None
     if not normalized or len(normalized.encode("utf-8")) > MAX_COMMAND or any(ch in normalized for ch in "\r\n\x00"):
         raise ValueError("invalid command length/content")
     if not is_supported_command(normalized):
-        raise ValueError("command is not supported by the Valhalla agent protocol")
+        raise ValueError("command is not supported by the Einherjar protocol")
     if normalized.upper().startswith("CMD:DIRECT_CONNECT:"):
         raise ValueError("direct-connect must be requested as CMD:DIRECT_CONNECT; the server supplies its current public IP")
     if not (target.lower() == "broadcast" or (len(target) == 64 and all(ch in "0123456789abcdefABCDEF" for ch in target))):
@@ -103,7 +103,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", default=os.getenv("VALHALLA_CONTROL_SOCKET", "/run/valhalla/control.sock"))
     parser.add_argument("--target", required=True, help="64-hex fingerprint or broadcast")
-    parser.add_argument("--command", required=True, help="command implemented by the Valhalla agent")
+    parser.add_argument("--command", required=True, help="command implemented by the Einherjar")
     parser.add_argument("--request-id")
     args = parser.parse_args()
     try:

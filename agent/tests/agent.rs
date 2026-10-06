@@ -25,9 +25,10 @@ fn transport_contract() {
     assert!(!source.contains("match endpoint {"));
 
     let args = std::fs::read_to_string("src/args.rs").unwrap();
-    assert!(!args.contains("VALHALLA_ENDPOINT"));
+    assert!(!args.contains("EINHERJAR_ENDPOINT"));
     assert!(args.contains("stub::load_config"));
-    assert!(args.contains("VALHALLA_AUTH_KEY_FILE"));
+    assert!(!args.contains("std::env::args"));
+    assert!(!args.contains("EINHERJAR_AUTH_KEY_FILE"));
 }
 
 #[test]
@@ -39,7 +40,7 @@ fn update_flow_contract() {
     }
     assert!(source.contains("spawn_blocking(move || handoff.wait_admission())"));
     assert!(!source.contains("unsupported-in-websocket-mode"));
-    for token in ["--valhalla-update-successor", "PROBE_WAIT", "UPDATE_FINAL_READY:", "request_helper_self_delete"] {
+    for token in ["EINHERJAR_UPDATE_SUCCESSOR", "PROBE_WAIT", "UPDATE_FINAL_READY:", "request_helper_self_delete"] {
         assert!(update.contains(token), "missing update token: {token}");
     }
 }

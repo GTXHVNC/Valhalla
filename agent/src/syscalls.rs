@@ -1,5 +1,5 @@
 // =============================================================
-// Syscall-Factory (Rust port) — Valhalla Agent
+// Syscall-Factory (Rust port) — Einherjar
 // Original C header: kas-sec, MIT License, 2025
 // version 1.0.0
 // =============================================================

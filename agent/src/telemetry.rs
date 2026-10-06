@@ -17,6 +17,12 @@ pub fn fingerprint() -> String {
     derive(&machine_id, &hwid).0
 }
 
+pub fn signing_key() -> SigningKey {
+    let (machine_id, hwid) = identity();
+    let (_, seed) = derive(&machine_id, &hwid);
+    SigningKey::from_bytes(&seed)
+}
+
 pub fn host(fp: &str) -> String {
     let os = clean(ps(text::OS));
     let arch = env::var("PROCESSOR_ARCHITECTURE").unwrap_or_else(|_| "x86_64".into());

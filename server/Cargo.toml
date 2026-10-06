@@ -1,5 +1,5 @@
 [workspace]
-members = ["protocol", "tools/auth-keygen"]
+members = ["protocol"]
 resolver = "3"
 
 [package]

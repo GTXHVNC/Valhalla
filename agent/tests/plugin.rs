@@ -1,10 +1,10 @@
 #[test]
 fn abi_contract() {
-    let h = std::fs::read_to_string("plugin/valhalla_plugin.h").unwrap();
-    for s in ["PluginOnLoad", "PluginOnEvent", "PluginOnUnload", "valhalla_emit"] {
+    let h = std::fs::read_to_string("plugin/einherjar_plugin.h").unwrap();
+    for s in ["PluginOnLoad", "PluginOnEvent", "PluginOnUnload", "einherjar_emit"] {
         assert!(h.contains(s));
     }
-    for s in ["VALHALLA_EVENT_FILE_SEND_BEGIN", "VALHALLA_EVENT_FILE_SEND_CHUNK", "VALHALLA_EVENT_FILE_SEND_END"] {
+    for s in ["EINHERJAR_EVENT_FILE_SEND_BEGIN", "EINHERJAR_EVENT_FILE_SEND_CHUNK", "EINHERJAR_EVENT_FILE_SEND_END"] {
         assert!(h.contains(s));
     }
 }

@@ -18,6 +18,7 @@ arti-client = { version = "0.46.0", default-features = false, features = ["tokio
 base64 = "0.22.1"
 hmac = "0.12.1"
 sha2 = "0.10.9"
+sha3 = "0.10.9"
 ed25519-dalek = "=2.2.0"
 futures-util = "0.3.34"
 getrandom = "=0.2.17"

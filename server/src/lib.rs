@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use futures_util::{SinkExt, StreamExt};
 use sha2::{Digest as Sha2Digest, Sha256};
+use sha3::{Digest as Sha3Digest, Sha3_256};
 use hmac::{Hmac, Mac};
 use zeroize::Zeroizing;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UnixListener}, sync::{mpsc, OwnedSemaphorePermit, Semaphore, watch}, time::{interval, timeout}};
@@ -39,6 +40,8 @@ pub struct Config {
     pub panel_listen: Option<String>,
     pub panel_cert: PathBuf,
     pub panel_key: PathBuf,
+    pub panel_ca_cert: PathBuf,
+    pub panel_ca_key: PathBuf,
     pub panel_secret_file: PathBuf,
     pub panel_id: String,
     pub panel_max_connections: usize,
@@ -1180,10 +1183,6 @@ fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-fn is_onion_base32(byte: u8) -> bool {
-    matches!(byte, b'a'..=b'z' | b'2'..=b'7')
-}
-
 fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
     tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .read_buffer_size(8 * 1024)
@@ -1206,23 +1205,76 @@ fn format_onion_endpoint(address: &tor_hsservice::HsId, port: u16, path: &str) -
         return Err("onion WebSocket path must start with '/'".into());
     };
 
-    let host = address.to_string();
-    let host = host.strip_suffix(".onion").unwrap_or(&host);
-    if host.len() != 56 || !host.bytes().all(is_onion_base32) {
-        return Err("Arti returned an invalid v3 onion hostname".to_owned());
-    }
+    // Arti 0.46 intentionally does not implement Display for HsId.  The public
+    // key bytes, however, are exposed through AsRef<[u8; 32]>. Encode the
+    // standard Tor v3 onion address directly from those bytes instead of
+    // parsing Debug output (which is redactable and therefore unsuitable for
+    // deriving an address).
+    let host = onion_v3_hostname(address.as_ref());
+    debug_assert_eq!(host.len(), 56);
     Ok(format!("ws://{host}.onion:{port}{path}"))
 }
 
+fn is_onion_base32(byte: u8) -> bool {
+    byte.is_ascii_lowercase() && matches!(byte, b'a'..=b'z') || matches!(byte, b'2'..=b'7')
+}
 
+fn onion_v3_hostname(public_key: &[u8]) -> String {
+    debug_assert_eq!(public_key.len(), 32);
+
+    // Tor v3 onion hostnames encode: 32-byte Ed25519 public key,
+    // 2-byte SHA3-256 checksum, then version byte 0x03.
+    let mut hash = Sha3_256::new();
+    hash.update(b".onion checksum");
+    hash.update(public_key);
+    hash.update([3]);
+    let checksum = hash.finalize();
+
+    let mut encoded = [0u8; 35];
+    encoded[..32].copy_from_slice(public_key);
+    encoded[32..34].copy_from_slice(&checksum[..2]);
+    encoded[34] = 3;
+    base32_lower_no_pad(&encoded)
+}
+
+fn base32_lower_no_pad(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let mut output = String::with_capacity((bytes.len() * 8 + 4) / 5);
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+    for &byte in bytes {
+        buffer = (buffer << 8) | u32::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            output.push(ALPHABET[((buffer >> bits) & 0x1f) as usize] as char);
+        }
+        if bits == 0 {
+            buffer = 0;
+        } else {
+            buffer &= (1u32 << bits) - 1;
+        }
+    }
+    if bits > 0 {
+        output.push(ALPHABET[((buffer << (5 - bits)) & 0x1f) as usize] as char);
+    }
+    output
+}
 
 #[cfg(test)]
 mod onion_endpoint_tests {
     use super::*;
 
     #[test]
-    fn formats_hsid_using_arti_display_hostname() {
-        let host = "a".repeat(56);
+    fn base32_encodes_32_bytes_to_56_chars() {
+        let encoded = onion_v3_hostname(&[0u8; 32]);
+        assert_eq!(encoded.len(), 56);
+        assert!(encoded.bytes().all(is_onion_base32));
+    }
+
+    #[test]
+    fn formats_hsid_from_arti_key_bytes() {
+        let host = onion_v3_hostname(&[0u8; 32]);
         let address: tor_hsservice::HsId = format!("{host}.onion").parse().unwrap();
         assert_eq!(
             format_onion_endpoint(&address, 443, "/valhalla").unwrap(),
@@ -1232,7 +1284,8 @@ mod onion_endpoint_tests {
 
     #[test]
     fn rejects_invalid_onion_path() {
-        let address: tor_hsservice::HsId = format!("{}.onion", "b".repeat(56)).parse().unwrap();
+        let host = onion_v3_hostname(&[1u8; 32]);
+        let address: tor_hsservice::HsId = format!("{host}.onion").parse().unwrap();
         assert!(format_onion_endpoint(&address, 443, "valhalla").is_err());
     }
 }

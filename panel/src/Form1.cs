@@ -3685,8 +3685,7 @@ namespace Valhalla
             //   32px  BUILD button
             // Total ≈ 156px  →  panelControl19 shrunk to 160px (+ 2px border padding each side)
 
-            const int leftPad  = 52;   // width of pictureEdit13 + panel border
-            const int rightPad = 4;
+            const int rightPad = 4; // right-side margin inside the host panel
             const int rowH     = 26;
             const int btnH     = 32;
             const int labelH   = 16;
@@ -3804,22 +3803,20 @@ namespace Valhalla
                 Dock      = DockStyle.Fill,
             };
 
-            // Row positions
+            // Row positions — Y coordinates are stable; X/Width values that
+            // depend on host.Width are set by ApplyHostLayout below.
             int y = 10;
 
-            label54.Location  = new Point(0, y);
+            label54.Location   = new Point(0, y);
             y += labelH + 4;
             textEdit4.Location = new Point(0, y);
             textEdit4.Height   = rowH;
             y += rowH + gap;
 
             installDirLabel.Location = new Point(0, y);
-            // Folder Name label aligned to same row
-            folderLabel.Location     = new Point(host.Width > 0 ? host.Width - 210 : 820, y);
             y += labelH + 4;
 
-            toggleRow.Location    = new Point(0, y);
-            _folderNameBox.Location = new Point(host.Width > 0 ? host.Width - 210 : 820, y);
+            toggleRow.Location      = new Point(0, y);
             _folderNameBox.Height   = 28;
             y += 30 + gap;
 
@@ -3834,16 +3831,26 @@ namespace Valhalla
             host.Controls.Add(_folderNameBox);
             host.Controls.Add(simpleButton6);
 
-            // Reposition folderLabel and _folderNameBox when host resizes
-            host.Resize += (s, e) =>
+            // Width-dependent layout: called once on first layout pass and again on every resize.
+            void ApplyHostLayout()
             {
-                int rightX = host.Width - _folderNameBox.Width - 4;
-                folderLabel.Left     = rightX;
-                _folderNameBox.Left  = rightX;
-                textEdit4.Width      = host.Width - 4;
-                simpleButton6.Width  = host.Width - 4;
-                toggleRow.Width      = rightX - 8;
-            };
+                if (host.Width <= 0) return;
+                int rightX = host.Width - _folderNameBox.Width - rightPad;
+                if (rightX < 0) rightX = 0;
+
+                folderLabel.Left         = rightX;
+                folderLabel.Top          = installDirLabel.Top;   // keep Y in sync
+                _folderNameBox.Left      = rightX;
+                _folderNameBox.Top       = toggleRow.Top;         // keep Y in sync
+                textEdit4.Width          = host.Width - rightPad;
+                simpleButton6.Width      = host.Width - rightPad;
+                toggleRow.Width          = rightX - 8;
+            }
+
+            // Apply on every resize …
+            host.Resize += (s, e) => ApplyHostLayout();
+            // … and immediately after the host has been parented and sized.
+            host.HandleCreated += (s, e) => host.BeginInvoke((Action)ApplyHostLayout);
 
             // Shrink panelControl19 to eliminate the dead space from hidden controls.
             // Original: 224px. We need: padding(2) + totalH + padding(2).

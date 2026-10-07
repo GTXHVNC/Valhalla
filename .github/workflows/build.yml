@@ -125,39 +125,69 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $marker = [System.Text.Encoding]::ASCII.GetBytes("VALHALLA-EINHERJAR-CFG-SLOT-V1`0`0")
+
+          # Search for the ASCII marker as text and validate the two NUL
+          # terminators separately. This avoids PowerShell's byte-array
+          # comparison/escaping pitfalls while still validating the raw PE
+          # bytes at the matched offset.
+          $markerText = 'VALHALLA-EINHERJAR-CFG-SLOT-V1'
+          $markerBytes = [System.Text.Encoding]::ASCII.GetBytes($markerText)
+          $markerLength = $markerBytes.Length
           $expectedCapacity = 4096 - 32 - 4
 
           function Assert-ConfigSlot([string]$path) {
-            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path).Path)
-            $found = $false
-            $limit = [Math]::Min($bytes.Length - $marker.Length - 4, (64 * 1024 * 1024) - $marker.Length - 4)
-            for ($i = 0; $i -le $limit; $i++) {
-              $match = $true
-              for ($j = 0; $j -lt $marker.Length; $j++) {
-                if ($bytes[$i + $j] -ne $marker[$j]) { $match = $false; break }
+            $resolved = (Resolve-Path -LiteralPath $path).Path
+            $bytes = [System.IO.File]::ReadAllBytes($resolved)
+            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+
+            $searchFrom = 0
+            while ($searchFrom -lt $text.Length) {
+              $offset = $text.IndexOf($markerText, $searchFrom, [System.StringComparison]::Ordinal)
+              if ($offset -lt 0) { break }
+
+              # Rust's CONFIG_SLOT_MARKER is the 30-byte ASCII prefix followed
+              # by two NUL bytes; verify those NUL bytes explicitly.
+              $markerEnd = $offset + $markerLength
+              if ($markerEnd + 2 + 4 -gt $bytes.Length) {
+                $searchFrom = $offset + 1
+                continue
               }
-              if (-not $match) { continue }
+              if ($bytes[$markerEnd] -ne 0 -or $bytes[$markerEnd + 1] -ne 0) {
+                $searchFrom = $offset + 1
+                continue
+              }
 
-              $capacity = $bytes[$i + $marker.Length] -bor
-                          ($bytes[$i + $marker.Length + 1] -shl 8) -bor
-                          ($bytes[$i + $marker.Length + 2] -shl 16) -bor
-                          ($bytes[$i + $marker.Length + 3] -shl 24)
-              if ($capacity -ne $expectedCapacity) { continue }
+              $capacityOffset = $markerEnd + 2
+              $capacity = [System.BitConverter]::ToUInt32($bytes, $capacityOffset)
+              if ($capacity -ne $expectedCapacity) {
+                $searchFrom = $offset + 1
+                continue
+              }
 
-              $payload = $i + $marker.Length + 4
-              if ($payload + $capacity -gt $bytes.Length) { continue }
+              $payload = $capacityOffset + 4
+              if ($payload + $capacity -gt $bytes.Length) {
+                $searchFrom = $offset + 1
+                continue
+              }
+
+              # A clean template must have the complete payload region blank.
               $blank = $true
-              for ($j = 0; $j -lt 16; $j++) {
-                if ($bytes[$payload + $j] -ne 0) { $blank = $false; break }
+              for ($j = 0; $j -lt $capacity; $j++) {
+                if ($bytes[$payload + $j] -ne 0) {
+                  $blank = $false
+                  break
+                }
               }
-              if ($blank) { $found = $true; break }
+              if (-not $blank) {
+                $searchFrom = $offset + 1
+                continue
+              }
+
+              Write-Host "${path}: dedicated configuration slot validated at 0x$('{0:X8}' -f $offset) ($capacity-byte blank payload)."
+              return
             }
 
-            if (-not $found) {
-              throw "$path does not contain a valid blank Einherjar configuration slot."
-            }
-            Write-Host "${path}: dedicated configuration slot validated ($expectedCapacity-byte payload)."
+            throw "${path} does not contain a valid blank Einherjar configuration slot."
           }
 
           Assert-ConfigSlot 'target\release\stub.bin'

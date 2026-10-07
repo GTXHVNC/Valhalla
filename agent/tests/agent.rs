@@ -56,6 +56,7 @@ fn runtime_stays_multithreaded() {
 fn configuration_contract() {
     let stub = std::fs::read_to_string("src/stub.rs").unwrap();
     assert!(stub.contains("CONFIG_SLOT_MARKER"));
+    assert!(stub.contains("const CONFIG_SLOT_MARKER: &[u8; 32]"));
     assert!(stub.contains("CONFIG_SLOT_SIZE: usize = 4096"));
     assert!(stub.contains("#[unsafe(no_mangle)]"));
     assert!(stub.contains("pub static EMBEDDED_CONFIG_SLOT"));
@@ -69,4 +70,16 @@ fn configuration_contract() {
     assert!(args.contains("pub fn get() -> Result<Args, String>"));
     assert!(args.contains("arti_bootstrap_timeout: Duration::from_secs(360)"));
     assert!(!args.contains("Duration::from_secs(180)"));
+}
+
+#[test]
+fn ci_config_slot_validator_contract() {
+    let workflow = std::fs::read_to_string("../.github/workflows/build.yml")
+        .or_else(|_| std::fs::read_to_string(".github/workflows/build.yml"))
+        .unwrap();
+    assert!(workflow.contains("$markerText = 'VALHALLA-EINHERJAR-CFG-SLOT-V1'"));
+    assert!(workflow.contains("[System.Text.Encoding]::ASCII.GetString($bytes)"));
+    assert!(workflow.contains("[System.StringComparison]::Ordinal"));
+    assert!(workflow.contains("${path}: dedicated configuration slot validated"));
+    assert!(!workflow.contains(r#""VALHALLA-EINHERJAR-CFG-SLOT-V1`0`0""#));
 }

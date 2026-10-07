@@ -23,16 +23,39 @@ namespace Valhalla
 
     internal static class AgentBuildService
     {
-        // Dedicated patchable configuration slot. This must match
-        // CONFIG_SLOT_MARKER / CONFIG_SLOT_SIZE in agent/src/stub.rs exactly.
-        private static readonly byte[] ConfigSlotMarker = Encoding.ASCII.GetBytes(
-            "VALHALLA-EINHERJAR-CFG-SLOT-V1\0\0");
+        // Dedicated patchable configuration slot. These values intentionally
+        // mirror CONFIG_SLOT_MARKER / CONFIG_SLOT_SIZE in agent/src/stub.rs.
+        // Keep the format stable: the panel writes this exact byte layout into
+        // both stub.bin and stub_debug.bin.
+        private const string ConfigSlotMarkerText = "VALHALLA-EINHERJAR-CFG-SLOT-V1";
+        private const int ConfigSlotMarkerTerminatorSize = 2;
         private const int ConfigSlotSize = 4096;
-        private const int ConfigSlotHeaderSize = 32 + 4;
+        private const int ConfigSlotMarkerLength = 30 + ConfigSlotMarkerTerminatorSize;
+        private const int ConfigSlotHeaderSize = ConfigSlotMarkerLength + 4;
+        private const int ConfigSlotPayloadCapacity = ConfigSlotSize - ConfigSlotHeaderSize;
+        private static readonly byte[] ConfigSlotMarker = BuildConfigSlotMarker();
 
         private static readonly Regex OnionEndpoint = new Regex(
             @"^ws://(?<host>[a-z2-7]{56})\.onion:(?<port>[1-9][0-9]{0,4})(?<path>/[^\s]*)?$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Validates that the selected stub is a clean V1 template with one
+        /// dedicated configuration slot before the build page asks the user
+        /// where to save the generated executable.
+        /// </summary>
+        public static void ValidateStubTemplate(AgentBuildVariant variant)
+        {
+            string stubPath = LocateStub(variant);
+            byte[] image = File.ReadAllBytes(stubPath);
+            ValidatePeImage(image, Path.GetFileName(stubPath));
+
+            int slotOffset = FindConfigSlot(image);
+            if (slotOffset < 0)
+                throw new InvalidDataException(
+                    $"{Path.GetFileName(stubPath)} does not contain a clean V1 Einherjar configuration slot. " +
+                    "Rebuild the agent stub from the current source before using the Build page.");
+        }
 
         /// <summary>
         /// Copies the appropriate stub template (<c>stub.bin</c> or
@@ -60,39 +83,28 @@ namespace Valhalla
 
             string stubPath = LocateStub(variant);
 
-            // Verify the source is a Windows PE.
-            using (FileStream verify = File.OpenRead(stubPath))
-            {
-                if (verify.Length < 2)
-                    throw new InvalidDataException(
-                        $"{Path.GetFileName(stubPath)} is too small to be a valid PE.");
-                int b0 = verify.ReadByte(), b1 = verify.ReadByte();
-                if (b0 != 'M' || b1 != 'Z')
-                    throw new InvalidDataException(
-                        $"{Path.GetFileName(stubPath)} is not a valid Windows PE executable (missing MZ header).");
-            }
-
-            // Read the clean template — never touch this file again after reading.
+            // Read and validate the clean template — never modify the source stub.
             byte[] image = File.ReadAllBytes(stubPath);
+            ValidatePeImage(image, Path.GetFileName(stubPath));
 
             // Build the configuration block.
             if (string.IsNullOrWhiteSpace(agentToken))
                 throw new ArgumentException("Relay agent authorization token is required.", nameof(agentToken));
             byte[] block = BuildConfigBlock(installDirectory, folderName, normalizedEndpoint, agentToken);
 
-            // Locate the dedicated patch slot. Never fall back to a generic magic
-            // search: the marker also appears in parser constants and test fixtures.
+            // Locate the dedicated V1 patch slot. Never fall back to the old
+            // VLHCFG sentinel because it may occur in unrelated executable data.
             int slotOffset = FindConfigSlot(image);
             if (slotOffset < 0)
                 throw new InvalidDataException(
-                    $"{Path.GetFileName(stubPath)} does not contain the dedicated Einherjar configuration slot. " +
+                    $"{Path.GetFileName(stubPath)} does not contain a clean V1 Einherjar configuration slot. " +
                     "Rebuild the agent stub from the current source.");
 
             int payloadOffset = slotOffset + ConfigSlotHeaderSize;
             int payloadCapacity = ReadInt32LittleEndian(image, slotOffset + ConfigSlotMarker.Length);
-            if (payloadCapacity <= 0 || payloadCapacity > ConfigSlotSize - ConfigSlotHeaderSize)
+            if (payloadCapacity != ConfigSlotPayloadCapacity)
                 throw new InvalidDataException(
-                    $"{Path.GetFileName(stubPath)} contains an invalid Einherjar configuration slot capacity.");
+                    $"{Path.GetFileName(stubPath)} contains an invalid V1 configuration-slot capacity.");
             if (payloadOffset > image.Length || payloadOffset + payloadCapacity > image.Length)
                 throw new InvalidDataException(
                     $"{Path.GetFileName(stubPath)} configuration slot extends beyond the executable image.");
@@ -106,16 +118,23 @@ namespace Valhalla
             Array.Clear(image, payloadOffset, payloadCapacity);
             Buffer.BlockCopy(block, 0, image, payloadOffset, block.Length);
 
+            // Never let the Build page overwrite its clean template.
+            string sourceFullPath = Path.GetFullPath(stubPath);
+            string outputFullPath = Path.GetFullPath(outputPath);
+            if (string.Equals(sourceFullPath, outputFullPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "Choose a different output filename; the clean agent stub template cannot be overwritten.");
+
             // Write the patched image to the user-chosen output path.
-            string dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+            string dir = Path.GetDirectoryName(outputFullPath);
             if (!string.IsNullOrWhiteSpace(dir))
                 Directory.CreateDirectory(dir);
 
             // Atomic-ish write: write to a temp file then move.
-            string tmp = outputPath + ".tmp";
+            string tmp = outputFullPath + ".tmp";
             File.WriteAllBytes(tmp, image);
-            if (File.Exists(outputPath)) File.Delete(outputPath);
-            File.Move(tmp, outputPath);
+            if (File.Exists(outputFullPath)) File.Delete(outputFullPath);
+            File.Move(tmp, outputFullPath);
         }
 
 
@@ -186,12 +205,31 @@ namespace Valhalla
             }
         }
 
+        private static byte[] BuildConfigSlotMarker()
+        {
+            byte[] text = Encoding.ASCII.GetBytes(ConfigSlotMarkerText);
+            byte[] marker = new byte[text.Length + ConfigSlotMarkerTerminatorSize];
+            Buffer.BlockCopy(text, 0, marker, 0, text.Length);
+            // The final two bytes are part of the on-disk marker and must remain NUL.
+            return marker;
+        }
+
+        private static void ValidatePeImage(byte[] image, string fileName)
+        {
+            if (image == null || image.Length < 2)
+                throw new InvalidDataException($"{fileName} is too small to be a valid PE.");
+            if (image[0] != 'M' || image[1] != 'Z')
+                throw new InvalidDataException(
+                    $"{fileName} is not a valid Windows PE executable (missing MZ header).");
+        }
+
         private static int FindConfigSlot(byte[] image)
         {
-            int limit = image.Length - ConfigSlotMarker.Length - 4;
+            int limit = image.Length - ConfigSlotHeaderSize - ConfigSlotPayloadCapacity;
             if (limit < 0) return -1;
-            limit = Math.Min(limit, (64 * 1024 * 1024) - ConfigSlotMarker.Length - 4);
+            limit = Math.Min(limit, (64 * 1024 * 1024) - ConfigSlotHeaderSize - ConfigSlotPayloadCapacity);
 
+            int found = -1;
             for (int i = 0; i <= limit; i++)
             {
                 bool match = true;
@@ -200,25 +238,29 @@ namespace Valhalla
                 if (!match) continue;
 
                 int capacity = ReadInt32LittleEndian(image, i + ConfigSlotMarker.Length);
-                if (capacity != ConfigSlotSize - ConfigSlotHeaderSize) continue;
+                if (capacity != ConfigSlotPayloadCapacity) continue;
                 if (i + ConfigSlotHeaderSize + capacity > image.Length) continue;
 
-                // The template reserves the entire payload as zeroes. Requiring
-                // a small zero prefix prevents accidental matches on code/data
-                // constants containing the marker text.
-                bool blankPrefix = true;
-                int check = Math.Min(16, capacity);
-                for (int j = 0; j < check; j++)
+                // Only clean, unpatched templates are valid input. Require the
+                // entire payload region to be zero, preventing accidental reuse
+                // of a previously patched executable or a false-positive marker.
+                bool blank = true;
+                for (int j = 0; j < capacity; j++)
                 {
                     if (image[i + ConfigSlotHeaderSize + j] != 0)
                     {
-                        blankPrefix = false;
+                        blank = false;
                         break;
                     }
                 }
-                if (blankPrefix) return i;
+                if (!blank) continue;
+
+                if (found >= 0)
+                    throw new InvalidDataException(
+                        "The agent stub contains multiple clean V1 configuration slots; refusing an ambiguous build template.");
+                found = i;
             }
-            return -1;
+            return found;
         }
 
         private static int ReadInt32LittleEndian(byte[] image, int offset)

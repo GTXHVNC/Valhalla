@@ -83,3 +83,25 @@ fn ci_config_slot_validator_contract() {
     assert!(workflow.contains("${path}: dedicated configuration slot validated"));
     assert!(!workflow.contains(r#""VALHALLA-EINHERJAR-CFG-SLOT-V1`0`0""#));
 }
+
+#[test]
+fn panel_build_slot_contract_matches_agent_format() {
+    let stub = std::fs::read_to_string("src/stub.rs").unwrap();
+    let panel = std::fs::read_to_string("../panel/src/AgentBuildService.cs")
+        .expect("panel AgentBuildService.cs must be present in the repository");
+
+    assert!(stub.contains("VALHALLA-EINHERJAR-CFG-SLOT-V1"));
+    assert!(panel.contains("VALHALLA-EINHERJAR-CFG-SLOT-V1"));
+    assert!(stub.contains("CONFIG_SLOT_SIZE: usize = 4096"));
+    assert!(panel.contains("private const int ConfigSlotSize = 4096"));
+    assert!(stub.contains("CONFIG_SLOT_HEADER_SIZE"));
+    assert!(panel.contains("ConfigSlotHeaderSize"));
+    assert!(panel.contains("private const int ConfigSlotMarkerTerminatorSize = 2"));
+    assert!(panel.contains("private const int ConfigSlotMarkerLength = 30 + ConfigSlotMarkerTerminatorSize"));
+    assert!(panel.contains("private const int ConfigSlotPayloadCapacity = ConfigSlotSize - ConfigSlotHeaderSize"));
+    assert!(panel.contains("FindConfigSlot(image)"));
+    assert!(panel.contains("Array.Clear(image, payloadOffset, payloadCapacity)"));
+    assert!(panel.contains("stub_debug.bin"));
+    assert!(panel.contains("stub.bin"));
+    assert!(panel.contains("ValidateStubTemplate(variant)"));
+}

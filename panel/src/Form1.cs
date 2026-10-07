@@ -4137,6 +4137,21 @@ namespace Valhalla
             string folderName = (_folderNameBox != null ? _folderNameBox.Text : null) ?? "Einherjar";
             if (string.IsNullOrWhiteSpace(folderName)) folderName = "Einherjar";
 
+            // Preflight the selected release/debug template before opening the
+            // Save dialog. The Build page now explicitly requires the new V1
+            // dedicated 4 KiB configuration slot in the chosen stub.
+            try
+            {
+                AgentBuildService.ValidateStubTemplate(variant);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message,
+                    variant == AgentBuildVariant.Debug ? "Einherjar Debug Build" : "Einherjar Build",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             string outputPath;
             using (var sfd = new System.Windows.Forms.SaveFileDialog
             {

@@ -35,6 +35,11 @@ const CHILD_WAIT: Duration = Duration::from_secs(45);
 const PARENT_WAIT: Duration = Duration::from_secs(120);
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const PROBE_READ_TIMEOUT: Duration = Duration::from_secs(15);
+// The update probe reuses existing Arti state from the parent process, so
+// bootstrap is expected to be fast.  60 seconds is generous but avoids
+// prematurely timing out on a slow first-run bootstrap if the probe
+// happens to run before the parent has finished bootstrapping.
+const PROBE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 const HANDOFF_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const HANDOFF_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const FINAL_READY_WAIT: Duration = Duration::from_secs(30);
@@ -1327,6 +1332,7 @@ fn run_probe(
                 &signing_key,
                 PROBE_CONNECT_TIMEOUT,
                 PROBE_READ_TIMEOUT,
+                PROBE_BOOTSTRAP_TIMEOUT,
             )
             .await?;
         let telemetry_data = telemetry::record(&endpoint_display, None, &actual_fingerprint);

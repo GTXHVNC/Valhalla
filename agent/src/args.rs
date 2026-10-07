@@ -9,6 +9,12 @@ pub struct Args {
     pub arti_cache_dir: PathBuf,
     pub connect_timeout: Duration,
     pub handshake_timeout: Duration,
+    /// Separate timeout for Arti/Tor first-run bootstrap.
+    /// Bootstrap on a first run must download consensus documents and
+    /// microdescriptors, which takes far longer than a single WebSocket
+    /// handshake.  This timeout governs the entire bootstrap phase and
+    /// must not be confused with the per-connection handshake timeout.
+    pub arti_bootstrap_timeout: Duration,
     pub heartbeat: Duration,
     pub retry_base: Duration,
     pub retry_max: Duration,
@@ -28,8 +34,12 @@ pub fn get() -> Args {
         arti_cache_dir,
         connect_timeout: Duration::from_secs(15),
         handshake_timeout: Duration::from_secs(10),
+        // First-run Arti/Tor bootstrap can take 60-120+ seconds on a slow
+        // connection.  This timeout is intentionally generous so that slow
+        // first-run setup does not terminate the agent prematurely.
+        arti_bootstrap_timeout: Duration::from_secs(180),
         heartbeat: Duration::from_secs(30),
-        retry_base: Duration::from_secs(1),
+        retry_base: Duration::from_secs(5),
         retry_max: Duration::from_secs(60),
     }
 }

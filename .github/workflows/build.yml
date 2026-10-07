@@ -18,7 +18,7 @@ jobs:
   agent:
     name: Build and test Einherjar
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: agent
@@ -50,24 +50,25 @@ jobs:
         shell: pwsh
         run: cargo test --manifest-path Cargo.toml
 
-      - name: Build agent
+      # ── Release build (stub.bin) ─────────────────────────────────────────
+      # Production agent: no debug output.  Uses the default release profile.
+      - name: Build agent (release)
         shell: pwsh
         run: |
           cargo build --release --manifest-path Cargo.toml --bin einherjar
           $exe = 'target\release\einherjar.exe'
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-            throw "Agent executable was not produced: $exe"
+            throw "Release agent executable was not produced: $exe"
           }
           if ((Get-Item -LiteralPath $exe).Length -le 0) {
-            throw 'Agent executable is empty.'
+            throw 'Release agent executable is empty.'
           }
 
       - name: Produce stub.bin
         shell: pwsh
         run: |
-          # The compiled PE is the stub template. Rename it .bin so the panel
-          # treats it as a raw binary blob rather than an executable, exactly
-          # as the architecture requires (valid PE, non-.exe extension).
+          # The compiled PE is the stub template.  Rename to .bin so the panel
+          # treats it as a raw binary blob rather than an executable.
           $exe  = 'target\release\einherjar.exe'
           $stub = 'target\release\stub.bin'
           Copy-Item -LiteralPath $exe -Destination $stub -Force
@@ -77,11 +78,47 @@ jobs:
           }
           Write-Host "stub.bin produced: $([System.IO.FileInfo]$stub | Select-Object -Expand Length) bytes"
 
+      # ── Debug build (stub_debug.bin) ─────────────────────────────────────
+      # Diagnostics-enabled agent: structured [DEBUG] logging to stderr.
+      # Uses the release-debug profile (inherits release, strips=none) with the
+      # debug-log Cargo feature.  Functionally identical to the release build;
+      # only the logging output differs.
+      - name: Build agent (debug-log)
+        shell: pwsh
+        run: |
+          cargo build --profile release-debug --features debug-log --manifest-path Cargo.toml --bin einherjar
+          $exe = 'target\release-debug\einherjar.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Debug agent executable was not produced: $exe"
+          }
+          if ((Get-Item -LiteralPath $exe).Length -le 0) {
+            throw 'Debug agent executable is empty.'
+          }
+
+      - name: Produce stub_debug.bin
+        shell: pwsh
+        run: |
+          $exe   = 'target\release-debug\einherjar.exe'
+          $stub  = 'target\release-debug\stub_debug.bin'
+          Copy-Item -LiteralPath $exe -Destination $stub -Force
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $stub).Path)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw 'stub_debug.bin MZ header check failed.'
+          }
+          Write-Host "stub_debug.bin produced: $([System.IO.FileInfo]$stub | Select-Object -Expand Length) bytes"
+
       - name: Upload stub.bin
         uses: actions/upload-artifact@v4
         with:
           name: einherjar-stub
           path: agent/target/release/stub.bin
+          if-no-files-found: error
+
+      - name: Upload stub_debug.bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: einherjar-stub-debug
+          path: agent/target/release-debug/stub_debug.bin
           if-no-files-found: error
 
   server:
@@ -204,7 +241,7 @@ jobs:
           if-no-files-found: error
 
   panel-bundle:
-    name: Bundle Valhalla Panel with stub
+    name: Bundle Valhalla Panel with stubs
     needs: [agent, panel]
     runs-on: windows-2022
     timeout-minutes: 15
@@ -221,28 +258,47 @@ jobs:
           name: einherjar-stub
           path: stub-artifact
 
-      - name: Validate stub.bin
+      - name: Download stub_debug.bin
+        uses: actions/download-artifact@v4
+        with:
+          name: einherjar-stub-debug
+          path: stub-debug-artifact
+
+      - name: Validate stubs
         shell: pwsh
         run: |
+          # Validate release stub
           $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path stub-artifact\stub.bin).Path)
           if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw 'stub\stub.bin MZ header check failed after download.'
+            throw 'stub.bin MZ header check failed after download.'
           }
           Write-Host "stub.bin ready: $($bytes.Length) bytes"
 
-      - name: Embed stub.bin into panel output
+          # Validate debug stub
+          $dbytes = [System.IO.File]::ReadAllBytes((Resolve-Path stub-debug-artifact\stub_debug.bin).Path)
+          if ($dbytes.Length -lt 2 -or $dbytes[0] -ne 0x4D -or $dbytes[1] -ne 0x5A) {
+            throw 'stub_debug.bin MZ header check failed after download.'
+          }
+          Write-Host "stub_debug.bin ready: $($dbytes.Length) bytes"
+
+          # Both stubs must be different (debug has debug-log feature; different size expected)
+          if ($bytes.Length -eq $dbytes.Length) {
+            Write-Warning "stub.bin and stub_debug.bin have identical sizes — verify debug-log feature is active in debug build."
+          }
+
+      - name: Embed stubs into panel output
         shell: pwsh
         run: |
-          # Place stub.bin at panel-artifact/stub/stub.bin so it ships
-          # alongside Valhalla.exe in the artifact and in the release bundle.
-          # LocateStub() will find it at depth 0 when the panel is run from
-          # that directory: panel\bin\Release\ → looks for stub\stub.bin there.
+          # Place both stubs at panel-artifact/stub/ so LocateStub() finds them
+          # at depth 0 when the panel is run from that directory.
           $dest = Join-Path $PWD 'panel-artifact\stub'
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Copy-Item -LiteralPath stub-artifact\stub.bin -Destination "$dest\stub.bin" -Force
-          Write-Host "stub.bin embedded at $dest\stub.bin"
+          Copy-Item -LiteralPath stub-artifact\stub.bin           -Destination "$dest\stub.bin"       -Force
+          Copy-Item -LiteralPath stub-debug-artifact\stub_debug.bin -Destination "$dest\stub_debug.bin" -Force
+          Write-Host "stub.bin embedded at       $dest\stub.bin"
+          Write-Host "stub_debug.bin embedded at $dest\stub_debug.bin"
 
-      - name: Upload panel
+      - name: Upload panel bundle
         uses: actions/upload-artifact@v4
         with:
           name: valhalla-panel-windows-x64
@@ -346,15 +402,16 @@ jobs:
           set -euo pipefail
           mkdir -p release/server release/panel
 
-          # Panel ships with stub/stub.bin already embedded inside the panel
-          # artifact (placed there by the panel job).  Copy the whole panel
+          # Panel ships with stub/ already embedded inside the panel artifact
+          # (placed there by the panel-bundle job).  Copy the whole panel
           # directory including the stub/ subdirectory.
           cp -a artifacts/valhalla-panel-windows-x64/. release/panel/
 
-          # Also place stub.bin at release/stub/stub.bin so LocateStub() finds
-          # it when walking up from release/panel/ → release/ → stub/stub.bin.
+          # Also place both stubs at release/stub/ so LocateStub() finds them
+          # when walking up from release/panel/ → release/ → stub/
           mkdir -p release/stub
-          cp artifacts/einherjar-stub/stub.bin release/stub/stub.bin
+          cp artifacts/einherjar-stub/stub.bin             release/stub/stub.bin
+          cp artifacts/einherjar-stub-debug/stub_debug.bin release/stub/stub_debug.bin
 
           cp artifacts/valhalla-relay-linux-x64/valhalla-relay release/server/valhalla-relay
 

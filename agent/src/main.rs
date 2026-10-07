@@ -1,5 +1,6 @@
 mod args;
 mod auth;
+mod log;
 mod stub;
 mod net;
 mod plugin;
@@ -11,7 +12,11 @@ mod text;
 mod transport;
 mod update;
 
+use crate::dbg_log;
+
 fn main() {
+    dbg_log!("[Startup] Einherjar entry point reached");
+
     if update::maybe_run_successor() {
         return;
     }
@@ -23,9 +28,15 @@ fn main() {
         Err(_) => std::process::exit(2),
     };
     if !sys::single() {
+        dbg_log!("[Startup] Another instance is already running; exiting");
         return;
     }
+
+    dbg_log!("[Config] Loading configuration from embedded stub");
     let args = args::get();
+    dbg_log!("[Config] Configuration loaded successfully");
+
+    dbg_log!("[Startup] Building async runtime");
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -34,7 +45,10 @@ fn main() {
         Ok(runtime) => runtime,
         Err(_) => std::process::exit(1),
     };
+    dbg_log!("[Startup] Runtime ready; entering network run loop");
     if runtime.block_on(net::run(&args, final_ready)).is_err() {
+        dbg_log!("[Shutdown] Network run loop exited with error");
         std::process::exit(1);
     }
+    dbg_log!("[Shutdown] Clean exit");
 }

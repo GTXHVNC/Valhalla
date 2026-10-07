@@ -9,7 +9,7 @@ use tokio_tungstenite::{client_async_with_config, tungstenite::{http::Request, M
 use tor_rtcompat::PreferredRuntime;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{auth, text};
+use crate::{auth, dbg_log, text};
 
 #[derive(Debug, Clone)]
 pub enum Endpoint {
@@ -212,19 +212,42 @@ impl Connector {
         self.endpoint = endpoint;
     }
 
-    async fn ensure_tor(&mut self, timeout_duration: Duration) -> io::Result<Arc<TorClient<PreferredRuntime>>> {
+    /// Initialise the Arti/Tor client, performing full bootstrap.
+    ///
+    /// The `bootstrap_timeout` governs the entire Arti bootstrap phase, which
+    /// includes downloading directory documents on first run.  This is
+    /// intentionally separate from the per-connection `handshake_timeout` used
+    /// by individual WebSocket operations: first-run bootstrap legitimately
+    /// takes far longer than a single network handshake and must not be
+    /// constrained by the same short timeout.
+    ///
+    /// Once bootstrap succeeds the client is cached; subsequent calls return
+    /// the cached client without re-bootstrapping.
+    async fn ensure_tor(&mut self, bootstrap_timeout: Duration) -> io::Result<Arc<TorClient<PreferredRuntime>>> {
         if let Some(tor) = &self.tor {
+            dbg_log!("[Arti] Using cached Tor client");
             return Ok(Arc::clone(tor));
         }
-        std::fs::create_dir_all(&self.state_dir)?;
-        std::fs::create_dir_all(&self.cache_dir)?;
+
+        dbg_log!("[Setup] Creating Arti state/cache directories");
+        std::fs::create_dir_all(&self.state_dir)
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to create Arti state dir: {e}")))?;
+        std::fs::create_dir_all(&self.cache_dir)
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to create Arti cache dir: {e}")))?;
+        dbg_log!("[Setup] Arti directories ready");
+
+        dbg_log!("[Arti] Building Arti client configuration");
         let config = TorClientConfigBuilder::from_directories(&self.state_dir, &self.cache_dir)
             .build()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("invalid Arti configuration: {e}")))?;
-        let tor = timeout(timeout_duration, TorClient::create_bootstrapped(config))
+
+        dbg_log!("[Arti] Starting Tor bootstrap (timeout: {}s)", bootstrap_timeout.as_secs());
+        let tor = timeout(bootstrap_timeout, TorClient::create_bootstrapped(config))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Arti bootstrap timeout"))?
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Arti bootstrap failed: {e}")))?;
+        dbg_log!("[Arti] Tor bootstrap completed successfully");
+
         self.tor = Some(Arc::clone(&tor));
         Ok(tor)
     }
@@ -235,13 +258,23 @@ impl Connector {
         signing_key: &SigningKey,
         connect_timeout: Duration,
         handshake_timeout: Duration,
+        bootstrap_timeout: Duration,
     ) -> io::Result<Session> {
-        let mut session = self.connect_ws(connect_timeout, handshake_timeout).await?;
+        dbg_log!("[Network] Connecting (connect={}s, handshake={}s, bootstrap={}s)",
+            connect_timeout.as_secs(), handshake_timeout.as_secs(), bootstrap_timeout.as_secs());
+        let mut session = self.connect_ws(connect_timeout, handshake_timeout, bootstrap_timeout).await?;
+        dbg_log!("[Network] WebSocket connection established; authenticating");
         authenticate(&mut session, ClientIdentity { fingerprint }, signing_key, handshake_timeout).await?;
+        dbg_log!("[Network] Authentication successful");
         Ok(session)
     }
 
-    pub async fn connect_ws(&mut self, connect_timeout: Duration, handshake_timeout: Duration) -> io::Result<Session> {
+    pub async fn connect_ws(
+        &mut self,
+        connect_timeout: Duration,
+        handshake_timeout: Duration,
+        bootstrap_timeout: Duration,
+    ) -> io::Result<Session> {
         let (host, port, path) = self.endpoint.target();
         let authority = Zeroizing::new(format_authority(host, port));
         let uri = Zeroizing::new(format!("ws://{}{}", authority.as_str(), path));
@@ -257,6 +290,7 @@ impl Connector {
         // cloned endpoint also keeps the endpoint data independent from the mutable Tor cache.
         match &endpoint {
             Endpoint::Local { host, port, .. } => {
+                dbg_log!("[Network] Connecting to local endpoint {}:{}", host, port);
                 let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), *port)))
                     .await
                     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "WebSocket connect timeout"))??;
@@ -267,7 +301,13 @@ impl Connector {
                 Ok(Session::Local(ws))
             }
             Endpoint::Onion { host, port, .. } => {
-                let tor = self.ensure_tor(handshake_timeout).await?;
+                // ensure_tor uses the bootstrap timeout, not the handshake timeout.
+                // This is intentional: first-run Arti bootstrap requires downloading
+                // directory documents and can take minutes.  The handshake timeout
+                // only applies to the subsequent per-connection WebSocket operations.
+                dbg_log!("[Arti] Ensuring Tor client is ready for onion connection");
+                let tor = self.ensure_tor(bootstrap_timeout).await?;
+                dbg_log!("[Network] Connecting to onion service {}:{}", &host[..8], port);
                 let stream = timeout(connect_timeout, tor.connect((host.as_str(), *port)))
                     .await
                     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Tor onion connection timeout"))?
@@ -279,6 +319,7 @@ impl Connector {
                 Ok(Session::Tor(ws))
             }
             Endpoint::Direct { host, port, .. } => {
+                dbg_log!("[Network] Connecting to direct endpoint {}:{}", host, port);
                 let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), *port)))
                     .await
                     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "direct WebSocket connect timeout"))?

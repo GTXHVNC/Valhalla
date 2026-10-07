@@ -4,6 +4,12 @@ version = "1.0.0"
 edition = "2024"
 rust-version = "1.92"
 
+[features]
+# Enable clean, structured diagnostic logging to stderr.
+# Enabled in debug builds (stub_debug.bin); disabled in production (stub.bin).
+# Do not enable in production — no functional change, but adds output overhead.
+debug-log = []
+
 [dependencies]
 arti-client = { version = "0.46.0", default-features = false, features = ["tokio", "native-tls", "onion-service-client", "static-sqlite"] }
 base64 = "0.22.1"
@@ -18,9 +24,19 @@ tor-rtcompat = { version = "0.46.0", default-features = false, features = ["toki
 valhalla_protocol = { path = "../server/protocol" }
 zeroize = "1.8.2"
 
+# Production/release build: no debug output.
+# Produces stub.bin via CI.
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+# Debug build: identical functionality with debug-log feature enabled.
+# Produces stub_debug.bin via CI.  Uses a separate profile to keep the
+# release profile untouched so CI can build both in the same job.
+[profile.release-debug]
+inherits = "release"
+# Keep full symbols so stack traces are readable in debug output.
+strip = "none"

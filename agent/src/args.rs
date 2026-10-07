@@ -21,7 +21,10 @@ pub struct Args {
 }
 
 pub fn get() -> Result<Args, String> {
-    let (endpoint, _endpoint_display, install_dir, folder_name, agent_token) = stub::load_config()?;
+    let (endpoint, _endpoint_display, install_dir, folder_name, agent_token) = match stub::load_config() {
+        Ok(value) => value,
+        Err(error) => return Err(error),
+    };
 
     let (arti_state_dir, arti_cache_dir) = resolve_data_dirs(&install_dir, &folder_name);
     Ok(Args {

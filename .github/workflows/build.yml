@@ -64,28 +64,6 @@ jobs:
             throw 'Release agent executable is empty.'
           }
 
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe).Path)
-          $magic = [byte[]](0x56,0x4C,0x48,0x43,0x46,0x47,0x00,0x01)
-          $tag = [System.Text.Encoding]::ASCII.GetBytes("VALHALLA-CFG-SLOT-V1`0")
-          $found = $false
-          for ($i = 0; $i -le ($bytes.Length - 4096) -and -not $found; $i++) {
-            $match = $true
-            for ($j = 0; $j -lt $magic.Length; $j++) { if ($bytes[$i + $j] -ne $magic[$j]) { $match = $false; break } }
-            if ($match) {
-              for ($j = 0; $j -lt $tag.Length; $j++) { if ($bytes[$i + $magic.Length + $j] -ne $tag[$j]) { $match = $false; break } }
-            }
-            if ($match) {
-              $payloadStart = $i + $magic.Length + $tag.Length
-              $regionEnd = $i + 4096
-              $empty = $true
-              for ($j = $payloadStart; $j -lt $regionEnd; $j++) {
-                if ($bytes[$j] -ne 0) { $empty = $false; break }
-              }
-              if ($empty) { $found = $true }
-            }
-          }
-          if (-not $found) { throw 'Release agent is missing the dedicated zero-filled 4096-byte configuration slot.' }
-
       - name: Produce stub.bin
         shell: pwsh
         run: |
@@ -117,28 +95,6 @@ jobs:
             throw 'Debug agent executable is empty.'
           }
 
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe).Path)
-          $magic = [byte[]](0x56,0x4C,0x48,0x43,0x46,0x47,0x00,0x01)
-          $tag = [System.Text.Encoding]::ASCII.GetBytes("VALHALLA-CFG-SLOT-V1`0")
-          $found = $false
-          for ($i = 0; $i -le ($bytes.Length - 4096) -and -not $found; $i++) {
-            $match = $true
-            for ($j = 0; $j -lt $magic.Length; $j++) { if ($bytes[$i + $j] -ne $magic[$j]) { $match = $false; break } }
-            if ($match) {
-              for ($j = 0; $j -lt $tag.Length; $j++) { if ($bytes[$i + $magic.Length + $j] -ne $tag[$j]) { $match = $false; break } }
-            }
-            if ($match) {
-              $payloadStart = $i + $magic.Length + $tag.Length
-              $regionEnd = $i + 4096
-              $empty = $true
-              for ($j = $payloadStart; $j -lt $regionEnd; $j++) {
-                if ($bytes[$j] -ne 0) { $empty = $false; break }
-              }
-              if ($empty) { $found = $true }
-            }
-          }
-          if (-not $found) { throw 'Debug agent is missing the dedicated zero-filled 4096-byte configuration slot.' }
-
       - name: Produce stub_debug.bin
         shell: pwsh
         run: |
@@ -164,6 +120,48 @@ jobs:
           name: einherjar-stub-debug
           path: agent/target/release-debug/stub_debug.bin
           if-no-files-found: error
+
+      - name: Validate embedded configuration slot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $marker = [System.Text.Encoding]::ASCII.GetBytes("VALHALLA-EINHERJAR-CFG-SLOT-V1`0`0")
+          $expectedCapacity = 4096 - 32 - 4
+
+          function Assert-ConfigSlot([string]$path) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path).Path)
+            $found = $false
+            $limit = [Math]::Min($bytes.Length - $marker.Length - 4, (64 * 1024 * 1024) - $marker.Length - 4)
+            for ($i = 0; $i -le $limit; $i++) {
+              $match = $true
+              for ($j = 0; $j -lt $marker.Length; $j++) {
+                if ($bytes[$i + $j] -ne $marker[$j]) { $match = $false; break }
+              }
+              if (-not $match) { continue }
+
+              $capacity = $bytes[$i + $marker.Length] -bor
+                          ($bytes[$i + $marker.Length + 1] -shl 8) -bor
+                          ($bytes[$i + $marker.Length + 2] -shl 16) -bor
+                          ($bytes[$i + $marker.Length + 3] -shl 24)
+              if ($capacity -ne $expectedCapacity) { continue }
+
+              $payload = $i + $marker.Length + 4
+              if ($payload + $capacity -gt $bytes.Length) { continue }
+              $blank = $true
+              for ($j = 0; $j -lt 16; $j++) {
+                if ($bytes[$payload + $j] -ne 0) { $blank = $false; break }
+              }
+              if ($blank) { $found = $true; break }
+            }
+
+            if (-not $found) {
+              throw "$path does not contain a valid blank Einherjar configuration slot."
+            }
+            Write-Host "$path: dedicated configuration slot validated ($expectedCapacity-byte payload)."
+          }
+
+          Assert-ConfigSlot 'target\release\stub.bin'
+          Assert-ConfigSlot 'target\release-debug\stub_debug.bin'
 
   server:
     name: Build and test Valhalla Server

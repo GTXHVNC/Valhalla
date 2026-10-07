@@ -12,6 +12,7 @@ mod text;
 mod transport;
 mod update;
 
+
 fn main() {
     dbg_log!("[Startup] Einherjar entry point reached");
 

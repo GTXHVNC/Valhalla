@@ -57,6 +57,11 @@ fn configuration_contract() {
     let stub = std::fs::read_to_string("src/stub.rs").unwrap();
     assert!(stub.contains("CONFIG_SLOT_MARKER"));
     assert!(stub.contains("CONFIG_SLOT_SIZE: usize = 4096"));
+    assert!(stub.contains("#[unsafe(no_mangle)]"));
+    assert!(stub.contains("pub static EMBEDDED_CONFIG_SLOT"));
+    assert!(stub.contains("fn anchor_config_slot()"));
+    assert!(stub.contains("read_volatile(EMBEDDED_CONFIG_SLOT.as_ptr())"));
+    assert!(stub.contains("anchor_config_slot();"));
     assert!(stub.contains("parse_payload"));
     assert!(stub.contains("while search_from + MAGIC.len() <= haystack.len()"));
 

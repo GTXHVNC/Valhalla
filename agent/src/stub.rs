@@ -40,7 +40,17 @@ const fn config_slot_template() -> [u8; CONFIG_SLOT_SIZE] {
 // panel's byte-for-byte patching step.
 #[used]
 #[cfg_attr(target_os = "windows", unsafe(link_section = ".rdata$VLHCFG"))]
-static EMBEDDED_CONFIG_SLOT: [u8; CONFIG_SLOT_SIZE] = config_slot_template();
+#[unsafe(no_mangle)]
+pub static EMBEDDED_CONFIG_SLOT: [u8; CONFIG_SLOT_SIZE] = config_slot_template();
+
+#[inline(never)]
+fn anchor_config_slot() {
+    // A volatile read creates a real code/data reference to the slot. This is
+    // deliberately tiny and only exists to make the patchable region survive
+    // aggressive release linking and LTO.
+    let first = unsafe { std::ptr::read_volatile(EMBEDDED_CONFIG_SLOT.as_ptr()) };
+    std::hint::black_box(first);
+}
 
 #[derive(Clone, Debug)]
 pub enum InstallDir {
@@ -85,6 +95,7 @@ pub struct Config {
 /// Read configuration from the running executable image.
 /// Returns (Endpoint, display_string, InstallDir, folder_name, agent_token).
 pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String, String), String> {
+    anchor_config_slot();
     let exe = std::env::current_exe()
         .map_err(|error| format!("unable to locate executable: {error}"))?;
     let bytes = fs::read(&exe)
@@ -158,9 +169,11 @@ fn parse_config(bytes: &[u8]) -> Option<Config> {
     // so an unrelated MAGIC occurrence cannot hide a later valid block.
     let mut search_from = 0;
     while search_from + MAGIC.len() <= haystack.len() {
-        let rel = haystack[search_from..]
+        let Some(rel) = haystack[search_from..]
             .windows(MAGIC.len())
-            .position(|w| w == MAGIC)?;
+            .position(|w| w == MAGIC) else {
+            break;
+        };
         let magic_pos = search_from + rel;
         if let Some(cfg) = parse_payload(bytes, magic_pos + MAGIC.len(), scan_limit) {
             return Some(cfg);

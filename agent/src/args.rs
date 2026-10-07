@@ -38,7 +38,7 @@ pub fn get() -> Result<Args, String> {
         heartbeat: Duration::from_secs(30),
         retry_base: Duration::from_secs(5),
         retry_max: Duration::from_secs(60),
-    }
+    })
 }
 
 fn resolve_data_dirs(install_dir: &stub::InstallDir, folder_name: &str) -> (PathBuf, PathBuf) {

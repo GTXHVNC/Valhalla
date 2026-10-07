@@ -63,7 +63,7 @@ fn configuration_slot_contract() {
         "SLOT_TAG",
         "CONFIG_REGION_SIZE: usize = 4096",
         "CONFIG_PAYLOAD_OFFSET",
-        "include_bytes!(concat!(env!("OUT_DIR")",
+        r#"include_bytes!(concat!(env!("OUT_DIR")"#,
         "std::hint::black_box(&EMBEDDED_CONFIG_REGION)",
         "embedded configuration region was not found or is invalid",
     ] {
@@ -75,6 +75,7 @@ fn configuration_slot_contract() {
     assert!(panel.contains("FindConfigSlot"));
     assert!(panel.contains("emptyPayload"));
     assert!(main.contains("let args = match args::get()"));
+    assert!(args.contains("pub fn get() -> Result<Args, String>"));
     assert!(!main.contains("use crate::dbg_log;"));
     assert!(args.contains("Duration::from_secs(360)"));
     assert!(!args.contains("Duration::from_secs(180)"));

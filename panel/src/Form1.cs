@@ -138,8 +138,10 @@ namespace Valhalla
         private System.Windows.Forms.FlowLayoutPanel _buildInstallButtonRow;
         private System.Windows.Forms.Label _buildInstallDirLabel;
         private System.Windows.Forms.Label _buildFolderLabel;
-        // Debug build button (Build Debug) lives alongside the existing simpleButton6 (Build Release).
-        private System.Windows.Forms.Button _buildDebugButton;
+        // Debug build button (Build Debug) intentionally uses the same DevExpress control type as
+        // simpleButton6 (Build Release) so it inherits the exact same skin, typography,
+        // focus treatment, spacing, and disabled/hover rendering.
+        private DevExpress.XtraEditors.SimpleButton _buildDebugButton;
         private int _selectedInstallDir = 1; // default: AppData\Local
         private DevExpress.XtraEditors.TextEdit relayAddressEditor;
         private DevExpress.XtraEditors.TextEdit relayPortEditor;
@@ -3761,20 +3763,34 @@ namespace Valhalla
             simpleButton6.Height = ScaleLogicalPixels(32, dpi);
             _buildContentLayout.Controls.Add(simpleButton6, 0, 6);
 
-            // Build Debug button (produces stub_debug.bin — diagnostics-enabled agent)
+            // Build Debug button (produces stub_debug.bin — diagnostics-enabled agent).
+            // Use the same DevExpress SimpleButton as Build Release rather than a native
+            // WinForms Button.  A native Button ignores the application's DevExpress skin
+            // and therefore rendered as an awkward white rectangle on dark themes.
             if (_buildDebugButton == null || _buildDebugButton.IsDisposed)
             {
-                _buildDebugButton = new System.Windows.Forms.Button
+                _buildDebugButton = new DevExpress.XtraEditors.SimpleButton
                 {
                     Name = "buildDebugButton",
                     Text = "Build Debug",
                     Dock = DockStyle.Fill,
                     Margin = Padding.Empty,
                     Height = ScaleLogicalPixels(32, dpi),
-                    UseVisualStyleBackColor = true,
+                    AllowFocus = false,
+                    ShowFocusRectangle = DevExpress.Utils.DefaultBoolean.False,
                 };
                 _buildDebugButton.Click += BuildDebugButton_Click;
             }
+
+            // Mirror the release button's configured visual resources.  This keeps the two
+            // actions visually identical even when the designer resource changes in future.
+            _buildDebugButton.ImageOptions.SvgImage = simpleButton6.ImageOptions.SvgImage;
+            _buildDebugButton.ImageOptions.Image = simpleButton6.ImageOptions.Image;
+            _buildDebugButton.ImageOptions.Location = simpleButton6.ImageOptions.Location;
+            _buildDebugButton.Appearance.Assign(simpleButton6.Appearance);
+            _buildDebugButton.AppearanceHovered.Assign(simpleButton6.AppearanceHovered);
+            _buildDebugButton.AppearancePressed.Assign(simpleButton6.AppearancePressed);
+            _buildDebugButton.AppearanceDisabled.Assign(simpleButton6.AppearanceDisabled);
             _buildContentLayout.Controls.Add(_buildDebugButton, 0, 8);
 
             _buildPageLayout.Controls.Add(_buildContentLayout, 1, 0);
@@ -4023,7 +4039,13 @@ namespace Valhalla
             label54.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             simpleButton6.Height = ScaleLogicalPixels(32, dpi);
             if (_buildDebugButton != null && !_buildDebugButton.IsDisposed)
+            {
                 _buildDebugButton.Height = ScaleLogicalPixels(32, dpi);
+                _buildDebugButton.Appearance.Assign(simpleButton6.Appearance);
+                _buildDebugButton.AppearanceHovered.Assign(simpleButton6.AppearanceHovered);
+                _buildDebugButton.AppearancePressed.Assign(simpleButton6.AppearancePressed);
+                _buildDebugButton.AppearanceDisabled.Assign(simpleButton6.AppearanceDisabled);
+            }
             panelControl19.MinimumSize = new Size(0, ScaleLogicalPixels(228, dpi));
             panelControl19.Height = ScaleLogicalPixels(228, dpi);
             pictureEdit13.Width = leftRail;

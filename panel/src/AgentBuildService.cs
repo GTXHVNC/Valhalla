@@ -28,6 +28,8 @@ namespace Valhalla
         private static readonly byte[] Magic = { (byte)'V', (byte)'L', (byte)'H',
                                                   (byte)'C', (byte)'F', (byte)'G',
                                                   0x00, 0x01 };
+        private static readonly byte[] SlotTag = Encoding.ASCII.GetBytes("VALHALLA-CFG-SLOT-V1\0");
+        private const int ConfigRegionSize = 4096;
 
         private static readonly Regex OnionEndpoint = new Regex(
             @"^ws://(?<host>[a-z2-7]{56})\.onion:(?<port>[1-9][0-9]{0,4})(?<path>/[^\s]*)?$",
@@ -79,20 +81,24 @@ namespace Valhalla
                 throw new ArgumentException("Relay agent authorization token is required.", nameof(agentToken));
             byte[] block = BuildConfigBlock(installDirectory, folderName, normalizedEndpoint, agentToken);
 
-            // Find the magic sentinel in the image and write the block immediately after it.
-            int offset = FindMagic(image);
+            // Find the dedicated configuration slot.  Do not patch the first
+            // occurrence of Magic: the compiled parser also contains those bytes.
+            int offset = FindConfigSlot(image);
             if (offset < 0)
                 throw new InvalidDataException(
-                    $"{Path.GetFileName(stubPath)} does not contain the Einherjar configuration sentinel. " +
-                    "Ensure the stub was produced by the Einherjar build.");
+                    $"{Path.GetFileName(stubPath)} does not contain the dedicated Einherjar configuration slot. " +
+                    "Ensure the stub was produced by the current Einherjar build.");
 
-            // Validate that the block fits in the space allocated after the sentinel.
-            int payloadOffset = offset + Magic.Length;
-            if (payloadOffset + block.Length > image.Length)
+            // Keep all patching inside the dedicated 4096-byte region.
+            int payloadOffset = checked(offset + Magic.Length + SlotTag.Length);
+            int regionEnd = checked(offset + ConfigRegionSize);
+            if (regionEnd > image.Length || payloadOffset + block.Length > regionEnd)
                 throw new InvalidDataException(
                     $"{Path.GetFileName(stubPath)} configuration region is too small to hold the current settings.");
 
-            // Write the configuration payload into the in-memory image.
+            // Clear the payload area before writing so repatching a previously
+            // configured template cannot leave stale credential/config bytes.
+            Array.Clear(image, payloadOffset, regionEnd - payloadOffset);
             Buffer.BlockCopy(block, 0, image, payloadOffset, block.Length);
 
             // Write the patched image to the user-chosen output path.
@@ -138,12 +144,13 @@ namespace Valhalla
         // ── Internal helpers ─────────────────────────────────────────────────
 
         /// <summary>
-        /// Builds the raw byte payload that follows the magic sentinel:
+        /// Builds the raw byte payload that follows the magic + slot tag:
         ///   [0]         install_dir : u8
         ///   [1..2]      folder_len  : u16 LE
         ///   [3..]       folder_name : UTF-8
         ///   [n+0..n+1]  onion_len   : u16 LE
         ///   [n+2..]     onion       : UTF-8
+        ///   ...          agent token length + UTF-8 token
         /// Must match the parser in agent/src/stub.rs exactly.
         /// </summary>
         private static byte[] BuildConfigBlock(int installDir, string folderName, string onion, string agentToken)
@@ -174,15 +181,40 @@ namespace Valhalla
             }
         }
 
-        private static int FindMagic(byte[] image)
+        private static int FindConfigSlot(byte[] image)
         {
-            int limit = Math.Min(image.Length - Magic.Length, 64 * 1024 * 1024);
+            int signatureLength = Magic.Length + SlotTag.Length;
+            if (image.Length < signatureLength)
+                return -1;
+
+            int limit = Math.Min(image.Length - signatureLength, 64 * 1024 * 1024);
             for (int i = 0; i <= limit; i++)
             {
                 bool match = true;
                 for (int j = 0; j < Magic.Length && match; j++)
                     match = image[i + j] == Magic[j];
-                if (match) return i;
+                for (int j = 0; j < SlotTag.Length && match; j++)
+                    match = image[i + Magic.Length + j] == SlotTag[j];
+                if (match && i <= image.Length - ConfigRegionSize)
+                {
+                    int payloadOffset = i + Magic.Length + SlotTag.Length;
+                    int regionEnd = i + ConfigRegionSize;
+                    bool emptyPayload = true;
+                    for (int j = payloadOffset; j < regionEnd; j++)
+                    {
+                        if (image[j] != 0)
+                        {
+                            emptyPayload = false;
+                            break;
+                        }
+                    }
+
+                    // Compiled stubs contain a zero-filled slot.  Requiring the
+                    // reserved area to be empty prevents the panel from ever
+                    // confusing the parser's own constants with the real slot.
+                    if (emptyPayload)
+                        return i;
+                }
             }
             return -1;
         }

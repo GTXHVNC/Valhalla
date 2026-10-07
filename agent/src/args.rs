@@ -20,11 +20,8 @@ pub struct Args {
     pub retry_max: Duration,
 }
 
-pub fn get() -> Args {
-    let (endpoint, _endpoint_display, install_dir, folder_name, agent_token) = match stub::load_config() {
-        Ok(value) => value,
-        Err(_) => std::process::exit(2),
-    };
+pub fn get() -> Result<Args, String> {
+    let (endpoint, _endpoint_display, install_dir, folder_name, agent_token) = stub::load_config()?;
 
     let (arti_state_dir, arti_cache_dir) = resolve_data_dirs(&install_dir, &folder_name);
     Args {
@@ -37,7 +34,7 @@ pub fn get() -> Args {
         // First-run Arti/Tor bootstrap can take 60-120+ seconds on a slow
         // connection.  This timeout is intentionally generous so that slow
         // first-run setup does not terminate the agent prematurely.
-        arti_bootstrap_timeout: Duration::from_secs(180),
+        arti_bootstrap_timeout: Duration::from_secs(360),
         heartbeat: Duration::from_secs(30),
         retry_base: Duration::from_secs(5),
         retry_max: Duration::from_secs(60),

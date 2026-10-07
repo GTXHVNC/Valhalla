@@ -53,13 +53,29 @@ fn runtime_stays_multithreaded() {
 }
 
 #[test]
-fn debug_log_macro_is_not_reimported_at_crate_root() {
+fn configuration_slot_contract() {
+    let stub = std::fs::read_to_string("src/stub.rs").unwrap();
+    let build = std::fs::read_to_string("build.rs").unwrap();
     let main = std::fs::read_to_string("src/main.rs").unwrap();
-    assert!(
-        !main.lines().any(|line| line.trim() == "use crate::dbg_log;"),
-        "dbg_log! is exported at the crate root and must not be re-imported there"
-    );
+    let args = std::fs::read_to_string("src/args.rs").unwrap();
 
-    let log = std::fs::read_to_string("src/log.rs").unwrap();
-    assert_eq!(log.matches("#[macro_export]").count(), 1);
+    for token in [
+        "SLOT_TAG",
+        "CONFIG_REGION_SIZE: usize = 4096",
+        "CONFIG_PAYLOAD_OFFSET",
+        "include_bytes!(concat!(env!("OUT_DIR")",
+        "std::hint::black_box(&EMBEDDED_CONFIG_REGION)",
+        "embedded configuration region was not found or is invalid",
+    ] {
+        assert!(stub.contains(token), "missing config-slot token: {token}");
+    }
+    assert!(build.contains("VALHALLA-CFG-SLOT-V1"));
+    assert!(build.contains("CONFIG_REGION_SIZE: usize = 4096"));
+    let panel = std::fs::read_to_string("../panel/src/AgentBuildService.cs").unwrap();
+    assert!(panel.contains("FindConfigSlot"));
+    assert!(panel.contains("emptyPayload"));
+    assert!(main.contains("let args = match args::get()"));
+    assert!(!main.contains("use crate::dbg_log;"));
+    assert!(args.contains("Duration::from_secs(360)"));
+    assert!(!args.contains("Duration::from_secs(180)"));
 }

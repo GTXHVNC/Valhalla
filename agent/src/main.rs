@@ -31,7 +31,13 @@ fn main() {
     }
 
     dbg_log!("[Config] Loading configuration from embedded stub");
-    let args = args::get();
+    let args = match args::get() {
+        Ok(args) => args,
+        Err(error) => {
+            dbg_log!("[Config] Configuration load failed: {}", error);
+            std::process::exit(2);
+        }
+    };
     dbg_log!("[Config] Configuration loaded successfully");
 
     dbg_log!("[Startup] Building async runtime");

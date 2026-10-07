@@ -64,6 +64,28 @@ jobs:
             throw 'Release agent executable is empty.'
           }
 
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe).Path)
+          $magic = [byte[]](0x56,0x4C,0x48,0x43,0x46,0x47,0x00,0x01)
+          $tag = [System.Text.Encoding]::ASCII.GetBytes("VALHALLA-CFG-SLOT-V1`0")
+          $found = $false
+          for ($i = 0; $i -le ($bytes.Length - 4096) -and -not $found; $i++) {
+            $match = $true
+            for ($j = 0; $j -lt $magic.Length; $j++) { if ($bytes[$i + $j] -ne $magic[$j]) { $match = $false; break } }
+            if ($match) {
+              for ($j = 0; $j -lt $tag.Length; $j++) { if ($bytes[$i + $magic.Length + $j] -ne $tag[$j]) { $match = $false; break } }
+            }
+            if ($match) {
+              $payloadStart = $i + $magic.Length + $tag.Length
+              $regionEnd = $i + 4096
+              $empty = $true
+              for ($j = $payloadStart; $j -lt $regionEnd; $j++) {
+                if ($bytes[$j] -ne 0) { $empty = $false; break }
+              }
+              if ($empty) { $found = $true }
+            }
+          }
+          if (-not $found) { throw 'Release agent is missing the dedicated zero-filled 4096-byte configuration slot.' }
+
       - name: Produce stub.bin
         shell: pwsh
         run: |
@@ -94,6 +116,28 @@ jobs:
           if ((Get-Item -LiteralPath $exe).Length -le 0) {
             throw 'Debug agent executable is empty.'
           }
+
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe).Path)
+          $magic = [byte[]](0x56,0x4C,0x48,0x43,0x46,0x47,0x00,0x01)
+          $tag = [System.Text.Encoding]::ASCII.GetBytes("VALHALLA-CFG-SLOT-V1`0")
+          $found = $false
+          for ($i = 0; $i -le ($bytes.Length - 4096) -and -not $found; $i++) {
+            $match = $true
+            for ($j = 0; $j -lt $magic.Length; $j++) { if ($bytes[$i + $j] -ne $magic[$j]) { $match = $false; break } }
+            if ($match) {
+              for ($j = 0; $j -lt $tag.Length; $j++) { if ($bytes[$i + $magic.Length + $j] -ne $tag[$j]) { $match = $false; break } }
+            }
+            if ($match) {
+              $payloadStart = $i + $magic.Length + $tag.Length
+              $regionEnd = $i + 4096
+              $empty = $true
+              for ($j = $payloadStart; $j -lt $regionEnd; $j++) {
+                if ($bytes[$j] -ne 0) { $empty = $false; break }
+              }
+              if ($empty) { $found = $true }
+            }
+          }
+          if (-not $found) { throw 'Debug agent is missing the dedicated zero-filled 4096-byte configuration slot.' }
 
       - name: Produce stub_debug.bin
         shell: pwsh

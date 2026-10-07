@@ -103,5 +103,10 @@ fn panel_build_slot_contract_matches_agent_format() {
     assert!(panel.contains("Array.Clear(image, payloadOffset, payloadCapacity)"));
     assert!(panel.contains("stub_debug.bin"));
     assert!(panel.contains("stub.bin"));
-    assert!(panel.contains("ValidateStubTemplate(variant)"));
+    // The service declares the preflight API; Form1 wires the selected
+    // Release/Debug build action to that API before opening the save dialog.
+    assert!(panel.contains("ValidateStubTemplate(AgentBuildVariant variant)"));
+    let form = std::fs::read_to_string("../panel/src/Form1.cs")
+        .expect("panel Form1.cs must be present in the repository");
+    assert!(form.contains("AgentBuildService.ValidateStubTemplate(variant);"));
 }

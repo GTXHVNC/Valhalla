@@ -12,8 +12,6 @@ mod text;
 mod transport;
 mod update;
 
-use crate::dbg_log;
-
 fn main() {
     dbg_log!("[Startup] Einherjar entry point reached");
 

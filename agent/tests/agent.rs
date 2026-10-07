@@ -51,3 +51,15 @@ fn runtime_stays_multithreaded() {
     assert!(main.contains("new_multi_thread"));
     assert!(main.contains("worker_threads(2)"));
 }
+
+#[test]
+fn debug_log_macro_is_not_reimported_at_crate_root() {
+    let main = std::fs::read_to_string("src/main.rs").unwrap();
+    assert!(
+        !main.lines().any(|line| line.trim() == "use crate::dbg_log;"),
+        "dbg_log! is exported at the crate root and must not be re-imported there"
+    );
+
+    let log = std::fs::read_to_string("src/log.rs").unwrap();
+    assert_eq!(log.matches("#[macro_export]").count(), 1);
+}

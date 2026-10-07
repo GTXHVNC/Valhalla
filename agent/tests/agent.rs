@@ -76,6 +76,7 @@ fn configuration_slot_contract() {
     assert!(panel.contains("emptyPayload"));
     assert!(main.contains("let args = match args::get()"));
     assert!(args.contains("pub fn get() -> Result<Args, String>"));
+    assert!(args.contains("Ok(Args {"));
     assert!(!main.contains("use crate::dbg_log;"));
     assert!(args.contains("Duration::from_secs(360)"));
     assert!(!args.contains("Duration::from_secs(180)"));

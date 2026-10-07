@@ -157,7 +157,7 @@ jobs:
             if (-not $found) {
               throw "$path does not contain a valid blank Einherjar configuration slot."
             }
-            Write-Host "$path: dedicated configuration slot validated ($expectedCapacity-byte payload)."
+            Write-Host "${path}: dedicated configuration slot validated ($expectedCapacity-byte payload)."
           }
 
           Assert-ConfigSlot 'target\release\stub.bin'

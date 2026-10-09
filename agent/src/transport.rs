@@ -1,15 +1,30 @@
-use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
 use arti_client::{config::TorClientConfigBuilder, DataStream, TorClient};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
-use tokio::{net::TcpStream, time::timeout};
+use tokio::{net::TcpStream, time::{sleep, timeout}};
 use tokio_tungstenite::{client_async_with_config, tungstenite::{http::Request, Message}, WebSocketStream};
 use tor_rtcompat::PreferredRuntime;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{auth, dbg_log, text};
+
+/// How long to pause after a bootstrap timeout before returning the error.
+///
+/// When `tokio::time::timeout` cancels the bootstrap future, Arti's background
+/// tasks (directory updater, status reporter) are still running on the Tokio
+/// runtime.  Those tasks hold file locks on the Arti state/cache directories.
+/// If we retry immediately, `create_unbootstrapped_async` will detect
+/// `LocalResourceAlreadyInUse` and open the SQLite directory store in
+/// **read-only** mode, which prevents any directory documents from being
+/// written and guarantees that every subsequent bootstrap attempt also times
+/// out.  Sleeping briefly after a cancelled bootstrap gives the background
+/// tasks enough time to observe that the `Arc<DirMgr>` has been dropped
+/// (`Weak::upgrade` → None) and exit, releasing both the SQLite lock file and
+/// the state lock file before we create a fresh client.
+const POST_CANCEL_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub enum Endpoint {
@@ -223,6 +238,34 @@ impl Connector {
     ///
     /// Once bootstrap succeeds the client is cached; subsequent calls return
     /// the cached client without re-bootstrapping.
+    ///
+    /// # Implementation notes
+    ///
+    /// This function deliberately **does not** call `TorClient::create_bootstrapped`
+    /// behind a single `tokio::time::timeout`.  That pattern has two problems:
+    ///
+    /// 1. When the outer timeout fires and drops the future, Arti's internal
+    ///    background tasks (directory updater, status reporter) are still alive
+    ///    on the Tokio runtime.  They hold file locks on the state/cache
+    ///    directories via `LockFileGuard`.  A fresh `create_unbootstrapped_async`
+    ///    call on the next retry then finds `LocalResourceAlreadyInUse` and
+    ///    silently downgrades the SQLite directory store to read-only mode.
+    ///    In read-only mode no directory documents can be written, so every
+    ///    subsequent bootstrap attempt also times out — forming an infinite loop.
+    ///
+    /// 2. The real error (network blockage, clock skew, directory failure) is
+    ///    discarded and replaced with the generic string "Arti bootstrap timeout",
+    ///    making the failure completely opaque.
+    ///
+    /// The fix is to:
+    ///   a) Create the client with `create_unbootstrapped_async` first (which
+    ///      itself handles `LocalResourceAlreadyInUse` with a short retry).
+    ///   b) Subscribe to bootstrap events so we can log meaningful progress.
+    ///   c) Drive `bootstrap()` and the event stream concurrently inside the
+    ///      deadline, logging progress at every status change.
+    ///   d) After a timeout cancellation, sleep `POST_CANCEL_GRACE` before
+    ///      returning so Arti's background tasks have time to see the dropped
+    ///      `Arc` and release their file locks before the next retry.
     async fn ensure_tor(&mut self, bootstrap_timeout: Duration) -> io::Result<Arc<TorClient<PreferredRuntime>>> {
         if let Some(tor) = &self.tor {
             dbg_log!("[Arti] Using cached Tor client");
@@ -241,15 +284,121 @@ impl Connector {
             .build()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("invalid Arti configuration: {e}")))?;
 
-        dbg_log!("[Arti] Starting Tor bootstrap (timeout: {}s)", bootstrap_timeout.as_secs());
-        let tor = timeout(bootstrap_timeout, TorClient::create_bootstrapped(config))
+        // Phase 1: create an unbootstrapped client.
+        //
+        // `create_unbootstrapped_async` acquires the state/cache directory
+        // locks and initialises in-memory data structures.  It already retries
+        // internally for up to 500 ms if another instance holds the lock
+        // (`LocalResourceAlreadyInUse`), which covers the window immediately
+        // after a previous bootstrap attempt was cancelled.  We still add
+        // POST_CANCEL_GRACE on the timeout path (below) to ensure the window
+        // is covered even when that built-in retry is exhausted.
+        dbg_log!("[Arti] Creating unbootstrapped Tor client");
+        let tor = TorClient::with_runtime(
+                tor_rtcompat::PreferredRuntime::current()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("could not obtain Tokio runtime handle: {e}")))?,
+            )
+            .config(config)
+            .create_unbootstrapped_async()
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Arti bootstrap timeout"))?
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Arti bootstrap failed: {e}")))?;
-        dbg_log!("[Arti] Tor bootstrap completed successfully");
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Arti client creation failed: {e}")))?;
 
-        self.tor = Some(Arc::clone(&tor));
-        Ok(tor)
+        // Phase 2: subscribe to bootstrap events before calling bootstrap().
+        //
+        // The subscription must be created before bootstrap() is called so that
+        // no status updates are missed between the two calls.
+        let mut events = tor.bootstrap_events();
+
+        dbg_log!("[Arti] Starting Tor bootstrap (timeout: {}s)", bootstrap_timeout.as_secs());
+        let start = Instant::now();
+
+        // Retain a second Arc handle before the async block below takes
+        // ownership of `tor`.  When the timeout fires and drops the async
+        // block, this handle keeps the TorClient alive for the grace-period
+        // sleep so that we can drop it intentionally after the sleep, not
+        // before.  In the success branch we use this handle to cache the
+        // client in self.tor.
+        let tor_handle = Arc::clone(&tor);
+
+        // Drive bootstrap() and status events concurrently.  We select! so
+        // that we can log meaningful progress at every status change while
+        // still driving the bootstrap future forward.
+        //
+        // `tor` is moved into this async block.  `tor_handle` is retained
+        // outside so the success/failure match arms can use the client.
+        let result = timeout(bootstrap_timeout, async move {
+            // Pin the bootstrap future so we can poll it repeatedly in select!.
+            tokio::pin! {
+                let boot = tor.bootstrap();
+            }
+            let mut last_pct = -1i32;
+            loop {
+                tokio::select! {
+                    // Bootstrap completed (or failed with a hard error).
+                    result = &mut boot => {
+                        return result.map_err(|e| {
+                            io::Error::new(io::ErrorKind::Other, format!("Arti bootstrap failed: {e}"))
+                        });
+                    }
+                    // A new status event arrived — log it and keep going.
+                    Some(status) = events.next() => {
+                        let pct = (status.as_frac() * 100.0) as i32;
+                        // Only log when the percentage changes to avoid spam.
+                        if pct != last_pct {
+                            last_pct = pct;
+                            let elapsed = start.elapsed().as_secs();
+                            if let Some(blockage) = status.blocked() {
+                                dbg_log!("[Arti] Bootstrap {}% (+{}s) — BLOCKED: {}",
+                                    pct, elapsed, blockage.message());
+                            } else {
+                                dbg_log!("[Arti] Bootstrap {}% (+{}s)", pct, elapsed);
+                            }
+                        }
+                    }
+                }
+            }
+        }).await;
+
+        match result {
+            // Bootstrap completed successfully.
+            Ok(Ok(())) => {
+                dbg_log!("[Arti] Tor bootstrap completed successfully (+{}s)",
+                    start.elapsed().as_secs());
+                // tor_handle is the surviving Arc (tor was moved into the async
+                // block above which has now been consumed by the timeout call).
+                self.tor = Some(Arc::clone(&tor_handle));
+                Ok(tor_handle)
+            }
+            // Bootstrap returned a hard error before the deadline.
+            Ok(Err(e)) => {
+                dbg_log!("[Arti] Bootstrap failed after {}s: {}",
+                    start.elapsed().as_secs(), e);
+                // Drop the client explicitly, then sleep so Arti's background
+                // tasks can observe the dropped Arc and release directory locks
+                // before the next retry.
+                drop(tor_handle);
+                sleep(POST_CANCEL_GRACE).await;
+                Err(e)
+            }
+            // The deadline fired — bootstrap was cancelled.
+            Err(_elapsed) => {
+                dbg_log!("[Arti] Bootstrap timed out after {}s (deadline={}s) — sleeping {}s to let background tasks release directory locks",
+                    start.elapsed().as_secs(),
+                    bootstrap_timeout.as_secs(),
+                    POST_CANCEL_GRACE.as_secs());
+                // The async block (which owned `tor`) was dropped when timeout
+                // fired, but tor_handle is still live here.  Dropping it now
+                // signals ManagerDropped to Arti's background tasks.  The sleep
+                // that follows gives them time to exit and release their file
+                // locks before the outer retry loop calls ensure_tor again.
+                drop(tor_handle);
+                sleep(POST_CANCEL_GRACE).await;
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("Arti bootstrap timed out after {}s", bootstrap_timeout.as_secs()),
+                ))
+            }
+        }
     }
 
     pub async fn connect_authenticated(

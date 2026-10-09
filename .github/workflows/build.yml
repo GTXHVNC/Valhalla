@@ -319,19 +319,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Download panel binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: valhalla-panel-binaries
           path: panel-artifact
 
       - name: Download stub.bin
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: einherjar-stub
           path: stub-artifact
 
       - name: Download stub_debug.bin
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: einherjar-stub-debug
           path: stub-debug-artifact
@@ -464,7 +464,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 

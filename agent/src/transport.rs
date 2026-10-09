@@ -254,8 +254,9 @@ impl Connector {
     ///    subsequent bootstrap attempt also times out — forming an infinite loop.
     ///
     /// 2. The real error (network blockage, clock skew, directory failure) is
-    ///    discarded and replaced with the generic string "Arti bootstrap timeout",
-    ///    making the failure completely opaque.
+    ///    discarded and replaced with a generic opaque timeout message,
+    ///    making it impossible to distinguish a timed-out bootstrap from one
+    ///    that failed immediately with a concrete error.
     ///
     /// The fix is to:
     ///   a) Create the client with `create_unbootstrapped_async` first (which

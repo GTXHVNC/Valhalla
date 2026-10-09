@@ -108,14 +108,14 @@ jobs:
           Write-Host "stub_debug.bin produced: $([System.IO.FileInfo]$stub | Select-Object -Expand Length) bytes"
 
       - name: Upload stub.bin
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: einherjar-stub
           path: agent/target/release/stub.bin
           if-no-files-found: error
 
       - name: Upload stub_debug.bin
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: einherjar-stub-debug
           path: agent/target/release-debug/stub_debug.bin
@@ -237,7 +237,7 @@ jobs:
           test -s target/release/valhalla-relay
 
       - name: Upload relay
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: valhalla-relay-linux-x64
           path: server/target/release/valhalla-relay
@@ -299,14 +299,14 @@ jobs:
           }
 
       - name: Upload Valhalla.exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Valhalla.exe
           path: panel/bin/Release/Valhalla.exe
           if-no-files-found: error
 
       - name: Upload panel binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: valhalla-panel-binaries
           path: panel/bin/Release/*
@@ -371,7 +371,7 @@ jobs:
           Write-Host "stub_debug.bin embedded at $dest\stub_debug.bin"
 
       - name: Upload panel bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: valhalla-panel-windows-x64
           path: panel-artifact/*
@@ -490,7 +490,7 @@ jobs:
           tar -C release -czf valhalla-build-${GITHUB_SHA}.tgz server panel stub
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: valhalla-build-${{ github.sha }}
           path: valhalla-build-${{ github.sha }}.tgz
